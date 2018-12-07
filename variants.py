@@ -17,6 +17,15 @@ lims_base_url = '***REMOVED***'
 # Base URL for S3
 s3_base_url = 'http://microbesng.s3.climb.ac.uk'
 
+# S3 / Boto3 Setup
+# boto3.set_stream_logger('')
+# Tell Boto3 to use the local aws config file which gives region and path style
+aws_config_file_path = Path(sys.path[0], '.aws', 'config')
+os.environ['AWS_CONFIG_FILE'] = str(aws_config_file_path)
+s3 = boto3.resource('s3', endpoint_url='***REMOVED***')
+s3.meta.client.meta.events.register('choose-signer.s3.*', disable_signing)
+s3_bucket = s3.Bucket('microbesng')
+
 def is_valid_results_path(results_path):
     """Check if the provided results path is present in S3 by sending a HEAD request."""
     results_res = requests.head('{}/{}/data.html'.format(s3_base_url, results_path))
@@ -42,23 +51,24 @@ def get_results_path(uuid):
 
 def download_reads(project_dir, results_path):
     """Download the reads zip for this project from S3"""
-    reads_zip = project_dir / 'reads.zip'
-    reads_s3_obj = s3_bucket.Object('b0e1596842_20180911_Forde1/reads.zip')
-    if reads_zip.is_file():
+    reads_zip_path = project_dir / 'reads.zip'
+    reads_s3_obj = s3_bucket.Object('{}/reads.zip'.format(results_path))
+    if reads_zip_path.is_file():
         print('Reads already downloaded for this project')
         # TODO: Check if the local reads are up to date with the S3 reads (non-trivial)
     else:
         print('Downloading reads...')
-        path_str = str(reads_zip.resolve())
+        path_str = str(reads_zip_path.resolve())
         reads_s3_obj.download_file(path_str)
         print('Download complete')
+    return reads_zip_path
 
 def unzip_samples():
     """Unzip only the required samples from the reads zip"""
     pass
 
 def main(args):
-    # Get the S3 results path from LIMS
+    # Get the S3 results path from the LIMS
     results_path = get_results_path(args.uuid)
     print('Results Path: {}'.format(results_path))
 
@@ -71,7 +81,7 @@ def main(args):
         print('Project Directory {} already exists'.format(project_dir))
     
     # Download the reads zip for this project from S3
-    download_reads(project_dir, results_path)
+    reads_zip_path = download_reads(project_dir, results_path)
 
 if __name__ == '__main__':
     # Parse the command line arguments against the valid arguments defined in arg_parser.py
