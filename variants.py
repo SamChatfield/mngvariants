@@ -131,7 +131,7 @@ def download_file(url, local_path):
 
 def get_reference(workspace, reference):
     """Get the reference genome sequence and annotations from refseq if we don't already have them"""
-    print('Getting reference: {}'.format(reference))
+    print('Get reference: {}'.format(reference))
     reference_dir = workspace / 'snpEff' / reference
     sequences_file = reference_dir / 'sequences.fa.gz'
     genes_file = reference_dir / 'genes.gff.gz'
@@ -141,24 +141,20 @@ def get_reference(workspace, reference):
     except FileExistsError:
         print('Reference directory {} already exists'.format(reference_dir))
 
-    # Get the RefSeq directory URL for this reference genome
-    refseq_url = get_refseq_url(reference)
-
-    # Check if the sequences.fa.gz file is already downloaded
-    if sequences_file.is_file():
-        print('Reference sequence already downloaded')
-    else:
-        # Download sequences.fa.gz
-        sequences_url = '{}/{}_genomic.fna.gz'.format(refseq_url, refseq_url.split('/')[-1])
-        download_file(sequences_url, sequences_file)
+    # Check if sequences.fa.gz and genes.gff.gz are already downloaded
+    (download_sequences, download_genes) = (not sequences_file.is_file(), not genes_file.is_file())
     
-    # Check if genes.gff.gz file is already downloaded
-    if genes_file.is_file():
-        print('Reference annotations already downloaded')
-    else:
+    if download_sequences or download_genes:
+        # Get the RefSeq directory URL for the reference
+        refseq_url = get_refseq_url(reference)
+        # Download sequences.fa.gz
+        if download_sequences:
+            sequences_url = '{}/{}_genomic.fna.gz'.format(refseq_url, refseq_url.split('/')[-1])
+            download_file(sequences_url, sequences_file)
         # Download genes.gff.gz
-        genes_url = '{}/{}_genomic.gff.gz'.format(refseq_url, refseq_url.split('/')[-1])
-        download_file(genes_url, genes_file)
+        if download_genes:
+            genes_url = '{}/{}_genomic.gff.gz'.format(refseq_url, refseq_url.split('/')[-1])
+            download_file(genes_url, genes_file)
 
 def main(args):
     # Get the S3 results path from the LIMS
@@ -179,7 +175,7 @@ def main(args):
     # Unzip required samples to reads directory
     unzip_samples(project_dir, reads_zip_path, args.samples)
 
-    # Get reference genome and annotations from refseq
+    # Get reference genome and annotations from RefSeq
     get_reference(args.workspace, args.reference)
 
 if __name__ == '__main__':
