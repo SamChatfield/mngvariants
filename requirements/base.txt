@@ -1,3 +1,4 @@
 requests==2.20.1
 boto3==1.9.53
 pandas==0.23.4
+python-dotenv==0.10.1

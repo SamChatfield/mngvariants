@@ -13,24 +13,29 @@ import botocore.exceptions
 import pandas as pd
 import requests
 from botocore.handlers import disable_signing
+from dotenv import load_dotenv
 
 from arg_parser import arg_parser
 
+# Load environment variables from .env file
+load_dotenv()
+
 # Base URL for LIMS
-lims_base_url = '***REMOVED***'
-# Base URL for S3
-s3_base_url = 'http://microbesng.s3.climb.ac.uk'
+lims_base_url = os.environ['LIMS_BASE_URL']
+# URL and bucket for S3
+s3_url = os.environ['S3_URL']
+s3_bucket_name = os.environ['S3_BUCKET']
 # RefSeq Bacteria Assembly Summary URL
-refseq_bacteria_assembly_summary_url = 'https://ftp.ncbi.nlm.nih.gov/genomes/refseq/bacteria/assembly_summary.txt'
+refseq_assembly_summary_url = 'https://ftp.ncbi.nlm.nih.gov/genomes/refseq/bacteria/assembly_summary.txt'
 
 # S3 / Boto3 Setup
 # boto3.set_stream_logger('')
 # Tell Boto3 to use the local aws config file which gives region and path style
 aws_config_file_path = Path(sys.path[0], '.aws', 'config')
 os.environ['AWS_CONFIG_FILE'] = str(aws_config_file_path)
-s3 = boto3.resource('s3', endpoint_url='***REMOVED***')
+s3 = boto3.resource('s3', endpoint_url=s3_url)
 s3.meta.client.meta.events.register('choose-signer.s3.*', disable_signing)
-s3_bucket = s3.Bucket('microbesng')
+s3_bucket = s3.Bucket(s3_bucket_name)
 
 def is_valid_results_path(results_path):
     """Check if the provided results path exists in S3."""
@@ -48,7 +53,7 @@ def get_results_path(uuid):
     # Get the JSON representation of the project from LIMS
     project_res = requests.get(
         '{}/layout/project_api/uuid={}.json'.format(lims_base_url, uuid),
-        params={ 'RFMkey': '***REMOVED***' },
+        params={ 'RFMkey': os.environ['LIMS_RESTFM_KEY'] },
         timeout=10
     )
     # Raise an exception if response was HTTP error code
@@ -117,7 +122,7 @@ def ftp_to_https(ftp_url):
 def get_refseq_url(reference):
     """Get the RefSeq directory HTTPS URL for the given reference by reading the bacteria assembly summary."""
     print('Getting RefSeq URL for reference "{}"...'.format(reference))
-    assembly_summary_data = pd.read_table(refseq_bacteria_assembly_summary_url, header=1, index_col=0, dtype={
+    assembly_summary_data = pd.read_table(refseq_assembly_summary_url, header=1, index_col=0, dtype={
         'relation_to_type_material': str
     })
     assembly_summary_data.rename_axis('assembly_accession', axis='index', inplace=True)
