@@ -33,7 +33,8 @@ s3_bucket = s3.Bucket('microbesng')
 
 def is_valid_results_path(results_path):
     """Check if the provided results path is present in S3 by sending a HEAD request."""
-    results_res = requests.head('{}/{}/data.html'.format(s3_base_url, results_path))
+    results_res = requests.head('{}/{}/data.html'.format(s3_base_url, results_path), timeout=10)
+    results_res.raise_for_status()
     return results_res.status_code == 200
 
 def get_results_path(uuid):
@@ -41,7 +42,8 @@ def get_results_path(uuid):
     # Get the JSON representation of the project from LIMS
     project_res = requests.get(
         '{}/layout/project_api/uuid={}.json'.format(lims_base_url, uuid),
-        params={ 'RFMkey': '***REMOVED***' }
+        params={ 'RFMkey': '***REMOVED***' },
+        timeout=10
     )
     # Raise an exception if response was HTTP error code
     project_res.raise_for_status()
