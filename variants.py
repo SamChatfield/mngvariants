@@ -9,6 +9,7 @@ from itertools import chain
 from pathlib import Path
 
 import boto3
+import botocore.exceptions
 import pandas as pd
 import requests
 from botocore.handlers import disable_signing
@@ -32,10 +33,15 @@ s3.meta.client.meta.events.register('choose-signer.s3.*', disable_signing)
 s3_bucket = s3.Bucket('microbesng')
 
 def is_valid_results_path(results_path):
-    """Check if the provided results path is present in S3 by sending a HEAD request."""
-    results_res = requests.head('{}/{}/data.html'.format(s3_base_url, results_path), timeout=10)
-    results_res.raise_for_status()
-    return results_res.status_code == 200
+    """Check if the provided results path exists in S3."""
+    try:
+        s3_bucket.Object('{}/data.html'.format(results_path)).load()
+        return True
+    except botocore.exceptions.ClientError as e:
+        if e.response['Error']['Code'] in ['403', '404']:
+            return False
+        else:
+            raise
 
 def get_results_path(uuid):
     """Get the results path of a project by querying LIMS using the UUID."""
@@ -57,7 +63,7 @@ def get_results_path(uuid):
     return results_path
 
 def download_reads(project_dir, results_path):
-    """Download the reads zip for this project from S3"""
+    """Download the reads zip for this project from S3."""
     reads_zip_path = project_dir / 'reads.zip'
     reads_s3_obj = s3_bucket.Object('{}/reads.zip'.format(results_path))
     if reads_zip_path.is_file():
@@ -71,7 +77,7 @@ def download_reads(project_dir, results_path):
     return reads_zip_path
 
 def unzip_samples(project_dir, reads_zip_path, samples):
-    """Unzip only the required samples' forward reads and reverse reads from the zip"""
+    """Unzip only the required samples' forward reads and reverse reads from the zip."""
     # Create the reads directory if it doesn't already exist
     reads_dir = project_dir / 'reads'
     try:
@@ -103,13 +109,13 @@ def unzip_samples(project_dir, reads_zip_path, samples):
                     local_file.write(reads_zip.read(str(zip_filepath)))
 
 def ftp_to_https(ftp_url):
-    """Convert a URL from FTP to HTTPS protocol"""
+    """Convert a URL from FTP to HTTPS protocol."""
     https_url = re.sub(r'^ftp:\/\/(.+)$', 'https://\\1', ftp_url)
     print('FTP {}\n-> HTTPS {}'.format(ftp_url, https_url))
     return https_url
 
 def get_refseq_url(reference):
-    """Get the RefSeq directory HTTPS URL for the given reference by reading the bacteria assembly summary"""
+    """Get the RefSeq directory HTTPS URL for the given reference by reading the bacteria assembly summary."""
     print('Getting RefSeq URL for reference "{}"...'.format(reference))
     assembly_summary_data = pd.read_table(refseq_bacteria_assembly_summary_url, header=1, index_col=0, dtype={
         'relation_to_type_material': str
@@ -125,13 +131,13 @@ def get_refseq_url(reference):
     return refseq_dir_https
 
 def download_file(url, local_path):
-    """Download file from the URL to the local path"""
+    """Download file from the URL to the local path."""
     print('Download: {} -> {}'.format(url, local_path))
     with urllib.request.urlopen(url) as response, open(local_path, 'wb') as out_file:
         shutil.copyfileobj(response, out_file)
 
 def add_reference_to_config(config_file, reference, refseq_url):
-    """Add the snpEff.config entries for the reference"""
+    """Add the snpEff.config entries for the reference."""
     assembly_report_data = pd.read_table(
         '{}/{}_assembly_report.txt'.format(refseq_url, refseq_url.split('/')[-1]),
         comment='#',
@@ -162,7 +168,7 @@ def add_reference_to_config(config_file, reference, refseq_url):
         cfg.writelines(new_lines)
 
 def get_reference(workspace, reference):
-    """Get the reference genome sequence and annotations from refseq if we don't already have them"""
+    """Get the reference genome sequence and annotations from refseq if we don't already have them."""
     print('Get reference: {}'.format(reference))
 
     config_file = workspace / 'snpEff.config'
