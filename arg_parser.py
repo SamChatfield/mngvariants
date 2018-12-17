@@ -1,9 +1,13 @@
 import argparse
 from pathlib import Path
 
+default_workspace_str = '~/variant_ws/'
+
 def convert_dir(dir_string):
     path = Path(dir_string).expanduser().resolve()
-    if not path.is_dir():
+    if not path.is_dir() and dir_string == default_workspace_str:
+        path.mkdir()
+    elif not path.is_dir():
         raise argparse.ArgumentTypeError('Workspace directory {} not found'.format(dir_string))
     return path
 
@@ -37,7 +41,7 @@ def arg_parser():
     # Parse the workspace directory
     parser.add_argument(
         '--workspace',
-        default='~/variant_ws',
+        default=default_workspace_str,
         type=convert_dir,
         help='directory to use as a workspace for variant calling, default ~/variant_ws'
     )
