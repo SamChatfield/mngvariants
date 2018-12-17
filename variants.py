@@ -79,7 +79,7 @@ def unzip_samples(project_dir, reads_zip_path, samples):
     except FileExistsError:
         print('Reads directory {} already exists'.format(reads_dir))
     
-    # Compute the list of sample files to extract from the zip
+    # Compute the list of sample files to extract from the zip, two for each sample
     sample_filenames = list(chain.from_iterable([
         ('{}_1_trimmed.fastq.gz'.format(s), '{}_2_trimmed.fastq.gz'.format(s)) for s in samples
     ]))
@@ -118,8 +118,7 @@ def get_refseq_url(reference):
     try:
         reference_data = assembly_summary_data.loc[reference]
     except KeyError:
-        print('Error: reference not found in RefSeq bacteria assembly_summary')
-        sys.exit(1)
+        raise Exception('Error: reference not found in RefSeq bacteria assembly_summary')
     refseq_dir_ftp = reference_data['ftp_path']
     refseq_dir_https = ftp_to_https(refseq_dir_ftp)
     print('RefSeq dir for this reference: {}'.format(refseq_dir_https))
@@ -131,12 +130,50 @@ def download_file(url, local_path):
     with urllib.request.urlopen(url) as response, open(local_path, 'wb') as out_file:
         shutil.copyfileobj(response, out_file)
 
+def add_reference_to_config(config_file, reference, refseq_url):
+    """Add the snpEff.config entries for the reference"""
+    assembly_report_data = pd.read_table(
+        '{}/{}_assembly_report.txt'.format(refseq_url, refseq_url.split('/')[-1]),
+        comment='#',
+        names=[
+            'Sequence-Name',
+            'Sequence-Role',
+            'Assigned-Molecule',
+            'Assigned-Molecule-Location/Type',
+            'GenBank-Accn',
+            'Relationship',
+            'RefSeq-Accn',
+            'Assembly-Unit',
+            'Sequence-Length',
+            'UCSC-style-name'
+        ]
+    )
+    # Extract the list of accessions without duplicates and in order
+    accessions = list(dict.fromkeys(assembly_report_data['RefSeq-Accn']))
+    # Write the lines for this reference with these accessions to snpEff.config
+    with open(config_file, 'a') as cfg:
+        new_lines = [
+            '',
+            '{0}.genome : {0}'.format(reference),
+            '\t{}.chromosome : {}'.format(reference, ', '.join(accessions)),
+        ]
+        new_lines += ['\t{}.{}.codonTable : Bacterial_and_Plant_Plastid'.format(reference, accession) for accession in accessions]
+        new_lines = ['{}\n'.format(l) for l in new_lines]
+        cfg.writelines(new_lines)
+
 def get_reference(workspace, reference):
     """Get the reference genome sequence and annotations from refseq if we don't already have them"""
     print('Get reference: {}'.format(reference))
-    reference_dir = workspace / 'snpEff' / reference
+
+    config_file = workspace / 'snpEff.config'
+    # Check that the snpEff.config file exists
+    if not config_file.is_file():
+        raise Exception('Workspace directory does not contain snpEff.config')
+
+    reference_dir = workspace / 'references' / reference
     sequences_file = reference_dir / 'sequences.fa.gz'
     genes_file = reference_dir / 'genes.gff.gz'
+
     # Create the directory for this reference in workspace/snpEff/ if it doesn't already exist
     try:
         reference_dir.mkdir()
@@ -145,10 +182,17 @@ def get_reference(workspace, reference):
 
     # Check if sequences.fa.gz and genes.gff.gz are already downloaded
     (download_sequences, download_genes) = (not sequences_file.is_file(), not genes_file.is_file())
-    
-    if download_sequences or download_genes:
+
+    # Check if snpEff.config already contains the configuration for this reference
+    regex = r'^{}.genome'.format(re.escape(reference))
+    with open(config_file) as cfg:
+        modify_config = not re.search(regex, cfg.read(), flags=re.MULTILINE)
+
+    # Only get the RefSeq URL if we absolutely have to because it's slow
+    if download_sequences or download_genes or modify_config:
         # Get the RefSeq directory URL for the reference
         refseq_url = get_refseq_url(reference)
+
         # Download sequences.fa.gz
         if download_sequences:
             sequences_url = '{}/{}_genomic.fna.gz'.format(refseq_url, refseq_url.split('/')[-1])
@@ -157,6 +201,13 @@ def get_reference(workspace, reference):
         if download_genes:
             genes_url = '{}/{}_genomic.gff.gz'.format(refseq_url, refseq_url.split('/')[-1])
             download_file(genes_url, genes_file)
+        
+        # Add reference to snpEff.config
+        if modify_config:
+            print('Adding snpEff.config entry for reference {}'.format(reference))
+            add_reference_to_config(config_file, reference, refseq_url)
+    
+    return reference_dir
 
 def main(args):
     # Get the S3 results path from the LIMS
@@ -178,7 +229,11 @@ def main(args):
     unzip_samples(project_dir, reads_zip_path, args.samples)
 
     # Get reference genome and annotations from RefSeq
-    get_reference(args.workspace, args.reference)
+    ref_dir = get_reference(args.workspace, args.reference)
+
+    # TODO: index reference (can run this on gz and it gives equivalent indices to ungz - tested by md5 hash)
+    # TODO: check if alignment then works and is equivalent whether run against gz indicies or ungz indicies
+    # TODO: do alignment as in gobwa script
 
 if __name__ == '__main__':
     # Parse the command line arguments against the valid arguments defined in arg_parser.py
