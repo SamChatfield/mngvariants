@@ -1,4 +1,5 @@
 import argparse
+import gzip
 import os
 import re
 import shutil
@@ -220,6 +221,22 @@ def get_reference(workspace, reference):
     
     return reference_dir
 
+def extract_reference(reference_directory):
+    """Extract the reference sequence and annotations and return the decompressed files."""
+    print('Extracting reference files...')
+    sequences_out = reference_directory / 'sequences.fa'
+    genes_out = reference_directory / 'genes.gff'
+
+    with gzip.open(reference_directory / 'sequences.fa.gz', 'rb') as seq_in:
+        with open(sequences_out, 'wb') as seq_out:
+            shutil.copyfileobj(seq_in, seq_out)
+    
+    with gzip.open(reference_directory / 'genes.gff.gz', 'rb') as gen_in:
+        with open(genes_out, 'wb') as gen_out:
+            shutil.copyfileobj(gen_in, gen_out)
+    
+    return (sequences_out, genes_out)
+
 def main(args):
     # Get the S3 results path from the LIMS
     results_path = get_results_path(args.uuid)
@@ -241,6 +258,9 @@ def main(args):
 
     # Get reference genome and annotations from RefSeq
     ref_dir = get_reference(args.workspace, args.reference)
+
+    # Extract the reference files and reads
+    (sequences_file, genes_file) = extract_reference(ref_dir)
 
     # TODO: index reference (can run this on gz and it gives equivalent indices to ungz - tested by md5 hash)
     # TODO: check if alignment then works and is equivalent whether run against gz indicies or ungz indicies
