@@ -188,7 +188,7 @@ def get_reference(workspace, reference):
 
     # Create the directory for this reference in workspace/snpEff/ if it doesn't already exist
     try:
-        reference_dir.mkdir()
+        reference_dir.mkdir(parents=True)
     except FileExistsError:
         print('Reference directory {} already exists'.format(reference_dir))
 
