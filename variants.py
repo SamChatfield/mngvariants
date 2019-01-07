@@ -1,5 +1,6 @@
 import argparse
 import gzip
+import multiprocessing
 import os
 import re
 import shutil
@@ -241,10 +242,11 @@ def extract_reference(reference_directory):
 
 def index_sequences(sequences_file):
     print('Indexing sequences file {}...'.format(sequences_file))
-    subprocess.call(['bwa', 'index', '{}'.format(sequences_file)])
+    subprocess.call(['bwa', 'index', '{}'.format(sequences_file)], stderr=subprocess.DEVNULL)
 
 def align(project_dir, reads_dir, sequences_file, samples):
     print('Aligning reads to reference...')
+    cpu_count = multiprocessing.cpu_count()
 
     for sample in samples:
         print('Aligning sample {}'.format(sample))
@@ -258,18 +260,18 @@ def align(project_dir, reads_dir, sequences_file, samples):
             bwa_mem = subprocess.Popen([
                 'bwa',
                 'mem',
-                '-t8',
+                '-t{}'.format(cpu_count),
                 '{}'.format(sequences_file),
                 '{}'.format(fwd_read),
                 '{}'.format(rev_read),
-            ], stdout=subprocess.PIPE)
+            ], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
             samtools_view = subprocess.Popen([
                 'samtools',
                 'view',
                 '-Shu',
                 '-'
-            ], stdin=bwa_mem.stdout, stdout=subprocess.PIPE)
+            ], stdin=bwa_mem.stdout, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             bwa_mem.stdout.close()
             
             samtools_sort = subprocess.Popen([
@@ -278,10 +280,10 @@ def align(project_dir, reads_dir, sequences_file, samples):
                 '-',
                 '-o',
                 '{}'.format(sorted_sample_file.resolve())
-            ], stdin=samtools_view.stdout, stdout=subprocess.PIPE)
+            ], stdin=samtools_view.stdout, stderr=subprocess.DEVNULL)
             samtools_view.stdout.close()
 
-            samtools_sort.communicate()[0]
+            samtools_sort.communicate()
 
 def main(args):
     # Get the S3 results path from the LIMS
