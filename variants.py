@@ -114,6 +114,7 @@ def unzip_samples(project_dir, reads_zip_path, samples):
                 with open(reads_local_file, 'wb') as local_file:
                     print('Zip {}\n-> Local {}'.format(zip_filepath, reads_local_file))
                     local_file.write(reads_zip.read(str(zip_filepath)))
+    return reads_dir
 
 def ftp_to_https(ftp_url):
     """Convert a URL from FTP to HTTPS protocol."""
@@ -239,8 +240,48 @@ def extract_reference(reference_directory):
     return (sequences_out, genes_out)
 
 def index_sequences(sequences_file):
-    print('Indexing sequences file {}'.format(sequences_file))
+    print('Indexing sequences file {}...'.format(sequences_file))
     subprocess.call(['bwa', 'index', '{}'.format(sequences_file)])
+
+def align(project_dir, reads_dir, sequences_file, samples):
+    print('Aligning reads to reference...')
+
+    for sample in samples:
+        print('Aligning sample {}'.format(sample))
+        fwd_read = reads_dir / '{}_1_trimmed.fastq.gz'.format(sample)
+        rev_read = reads_dir / '{}_2_trimmed.fastq.gz'.format(sample)
+        sorted_sample_file = project_dir / '{}.sorted.bam'.format(sample)
+
+        if sorted_sample_file.is_file():
+            print('Sample {} already aligned, skipping'.format(sample))
+        else:
+            bwa_mem = subprocess.Popen([
+                'bwa',
+                'mem',
+                '-t8',
+                '{}'.format(sequences_file),
+                '{}'.format(fwd_read),
+                '{}'.format(rev_read),
+            ], stdout=subprocess.PIPE)
+
+            samtools_view = subprocess.Popen([
+                'samtools',
+                'view',
+                '-Shu',
+                '-'
+            ], stdin=bwa_mem.stdout, stdout=subprocess.PIPE)
+            bwa_mem.stdout.close()
+            
+            samtools_sort = subprocess.Popen([
+                'samtools',
+                'sort',
+                '-',
+                '-o',
+                '{}'.format(sorted_sample_file.resolve())
+            ], stdin=samtools_view.stdout, stdout=subprocess.PIPE)
+            samtools_view.stdout.close()
+
+            samtools_sort.communicate()[0]
 
 def main(args):
     # Get the S3 results path from the LIMS
@@ -259,7 +300,7 @@ def main(args):
     reads_zip_path = download_reads(project_dir, results_path)
 
     # Unzip required samples to reads directory
-    unzip_samples(project_dir, reads_zip_path, args.samples)
+    reads_dir = unzip_samples(project_dir, reads_zip_path, args.samples)
 
     # Get reference genome and annotations from RefSeq
     ref_dir = get_reference(args.workspace, args.reference)
@@ -270,8 +311,8 @@ def main(args):
     # Index the reference sequences file using bwa index
     index_sequences(sequences_file)
 
-    # TODO: check if alignment then works and is equivalent whether run against gz indicies or ungz indicies
-    # TODO: do alignment as in gobwa script
+    # Align the sample reads to the reference using bwa mem and sort the bam file
+    align(project_dir, reads_dir, sequences_file, args.samples)
 
 if __name__ == '__main__':
     # Parse the command line arguments against the valid arguments defined in arg_parser.py
