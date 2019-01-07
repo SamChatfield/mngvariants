@@ -3,6 +3,7 @@ import gzip
 import os
 import re
 import shutil
+import subprocess
 import sys
 import urllib.request
 import zipfile
@@ -237,6 +238,10 @@ def extract_reference(reference_directory):
     
     return (sequences_out, genes_out)
 
+def index_sequences(sequences_file):
+    print('Indexing sequences file {}'.format(sequences_file))
+    subprocess.call(['bwa', 'index', '{}'.format(sequences_file)])
+
 def main(args):
     # Get the S3 results path from the LIMS
     results_path = get_results_path(args.uuid)
@@ -262,7 +267,9 @@ def main(args):
     # Extract the reference files and reads
     (sequences_file, genes_file) = extract_reference(ref_dir)
 
-    # TODO: index reference (can run this on gz and it gives equivalent indices to ungz - tested by md5 hash)
+    # Index the reference sequences file using bwa index
+    index_sequences(sequences_file)
+
     # TODO: check if alignment then works and is equivalent whether run against gz indicies or ungz indicies
     # TODO: do alignment as in gobwa script
 
