@@ -247,12 +247,14 @@ def index_sequences(sequences_file):
 def align(project_dir, reads_dir, sequences_file, samples):
     print('Aligning reads to reference...')
     cpu_count = multiprocessing.cpu_count()
+    alignment_files = []
 
     for sample in samples:
         print('Aligning sample {}'.format(sample))
         fwd_read = reads_dir / '{}_1_trimmed.fastq.gz'.format(sample)
         rev_read = reads_dir / '{}_2_trimmed.fastq.gz'.format(sample)
         sorted_sample_file = project_dir / '{}.sorted.bam'.format(sample)
+        alignment_files.append(sorted_sample_file)
 
         if sorted_sample_file.is_file():
             print('Sample {} already aligned, skipping'.format(sample))
@@ -284,6 +286,61 @@ def align(project_dir, reads_dir, sequences_file, samples):
             samtools_view.stdout.close()
 
             samtools_sort.communicate()
+    return alignment_files
+
+def generate_mpileup(project_dir, sequences_file, alignment_files):
+    print('Generating mpileup file...')
+    mpileup_file = project_dir / 'data.mpileup'
+
+    if mpileup_file.is_file():
+        print('mpileup already exists, skipping')
+    else:
+        alignment_file_paths = [filepath.resolve() for filepath in alignment_files]
+
+        with open(mpileup_file, 'w') as out_file:
+            subprocess.call([
+                'samtools',
+                'mpileup',
+                '-f',
+                '{}'.format(sequences_file)
+            ] + alignment_file_paths, stdout=out_file)
+    
+    return mpileup_file
+
+def write_sample_list(project_dir, samples):
+    sample_list_file = project_dir / 'samples_list.txt'
+    with open(sample_list_file, 'w') as f:
+        for sample in samples:
+            f.write('{}\n'.format(sample))
+    return sample_list_file
+
+def varscan_cmd(min_coverage, min_var_freq, p_value, mpileup_file, sample_list_file):
+    return [
+        'varscan',
+        'mpileup2cns',
+        '{}'.format(mpileup_file),
+        '--min-coverage {}'.format(min_coverage),
+        '--min-var-freq {}'.format(min_var_freq),
+        '--p-value {}'.format(p_value),
+        '--output-vcf',
+        '--variants 1',
+        '--vcf-sample-list {}'.format(sample_list_file.resolve())
+    ]
+
+def variant_calling(project_dir, sample_list_file, mpileup_file):
+    print('Performing variant calling...')
+    spec_file = project_dir / 'spec_variants.vcf'
+    sens_file = project_dir / 'sens_variants.vcf'
+    
+    with open(spec_file, 'w') as spec_out, open(sens_file, 'w') as sens_out:
+        spec_cmd = varscan_cmd(3, 0.1, 0.05, mpileup_file, sample_list_file)
+        sens_cmd = varscan_cmd(3, 0.9, 0.05, mpileup_file, sample_list_file)
+        spec_varscan = subprocess.Popen(spec_cmd, stdout=spec_out, stderr=subprocess.DEVNULL)
+        sens_varscan = subprocess.Popen(sens_cmd, stdout=sens_out, stderr=subprocess.DEVNULL)
+        spec_varscan.communicate()
+        sens_varscan.communicate()
+    
+    return (spec_file, sens_file)
 
 def main(args):
     # Get the S3 results path from the LIMS
@@ -296,7 +353,7 @@ def main(args):
         project_dir.mkdir(parents=True)
         print('Project directory {} created'.format(project_dir))
     except FileExistsError:
-        print('Project Directory {} already exists'.format(project_dir))
+        print('Project directory {} already exists'.format(project_dir))
     
     # Download the reads zip for this project from S3
     reads_zip_path = download_reads(project_dir, results_path)
@@ -314,7 +371,16 @@ def main(args):
     index_sequences(sequences_file)
 
     # Align the sample reads to the reference using bwa mem and sort the bam file
-    align(project_dir, reads_dir, sequences_file, args.samples)
+    alignment_files = align(project_dir, reads_dir, sequences_file, args.samples)
+
+    # Generate mpileup
+    mpileup_file = generate_mpileup(project_dir, sequences_file, alignment_files)
+
+    # Write sample list file as required by VarScan's vcf-sample-list option
+    sample_list_file = write_sample_list(project_dir, args.samples)
+
+    # Perform variant calling
+    (spec_file, sens_file) = variant_calling(project_dir, sample_list_file, mpileup_file)
 
 if __name__ == '__main__':
     # Parse the command line arguments against the valid arguments defined in arg_parser.py
