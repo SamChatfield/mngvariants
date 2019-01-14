@@ -147,6 +147,7 @@ def download_file(url, local_path):
 
 def add_reference_to_config(config_file, reference, refseq_url):
     """Add the snpEff.config entries for the reference."""
+    print('Adding snpEff.config entry for reference {}...'.format(reference))
     assembly_report_data = pd.read_table(
         '{}/{}_assembly_report.txt'.format(refseq_url, refseq_url.split('/')[-1]),
         comment='#',
@@ -176,16 +177,29 @@ def add_reference_to_config(config_file, reference, refseq_url):
         new_lines = ['{}\n'.format(l) for l in new_lines]
         cfg.writelines(new_lines)
 
+def build_snpeff_database(config_file, references_dir, reference):
+    print('Building SnpEff database...')
+    subprocess.call([
+        'snpeff',
+        'build',
+        '-c {}'.format(config_file.resolve()),
+        '-dataDir {}'.format(references_dir.resolve()),
+        '-gff3',
+        '-v',
+        '{}'.format(reference)
+    ])
+
 def get_reference(workspace, reference):
     """Get the reference genome sequence and annotations from refseq if we don't already have them."""
-    print('Get reference: {}'.format(reference))
+    print('Get reference {}...'.format(reference))
 
     config_file = workspace / 'snpEff.config'
     # Check that the snpEff.config file exists
     if not config_file.is_file():
         raise Exception('Workspace directory does not contain snpEff.config')
 
-    reference_dir = workspace / 'references' / reference
+    references_dir = workspace / 'references'
+    reference_dir = references_dir / reference
     sequences_file = reference_dir / 'sequences.fa.gz'
     genes_file = reference_dir / 'genes.gff.gz'
 
@@ -219,8 +233,8 @@ def get_reference(workspace, reference):
         
         # Add reference to snpEff.config
         if modify_config:
-            print('Adding snpEff.config entry for reference {}'.format(reference))
             add_reference_to_config(config_file, reference, refseq_url)
+            build_snpeff_database(config_file, references_dir, reference)
     
     return reference_dir
 
@@ -238,7 +252,7 @@ def extract_reference(reference_directory):
         with open(genes_out, 'wb') as gen_out:
             shutil.copyfileobj(gen_in, gen_out)
     
-    return (sequences_out, genes_out)
+    return sequences_out
 
 def index_sequences(sequences_file):
     print('Indexing sequences file {}...'.format(sequences_file))
@@ -332,15 +346,52 @@ def variant_calling(project_dir, sample_list_file, mpileup_file):
     spec_file = project_dir / 'spec_variants.vcf'
     sens_file = project_dir / 'sens_variants.vcf'
     
-    with open(spec_file, 'w') as spec_out, open(sens_file, 'w') as sens_out:
-        spec_cmd = varscan_cmd(3, 0.1, 0.05, mpileup_file, sample_list_file)
-        sens_cmd = varscan_cmd(3, 0.9, 0.05, mpileup_file, sample_list_file)
-        spec_varscan = subprocess.Popen(spec_cmd, stdout=spec_out, stderr=subprocess.DEVNULL)
-        sens_varscan = subprocess.Popen(sens_cmd, stdout=sens_out, stderr=subprocess.DEVNULL)
-        spec_varscan.communicate()
-        sens_varscan.communicate()
+    if spec_file.is_file() and sens_file.is_file():
+        print('Variant VCFs already exist, skipping...')
+    else:
+        with open(spec_file, 'w') as spec_out, open(sens_file, 'w') as sens_out:
+            spec_cmd = varscan_cmd(3, 0.1, 0.05, mpileup_file, sample_list_file)
+            sens_cmd = varscan_cmd(3, 0.9, 0.05, mpileup_file, sample_list_file)
+            spec_varscan = subprocess.Popen(spec_cmd, stdout=spec_out, stderr=subprocess.DEVNULL)
+            sens_varscan = subprocess.Popen(sens_cmd, stdout=sens_out, stderr=subprocess.DEVNULL)
+            spec_varscan.communicate()
+            sens_varscan.communicate()
     
     return (spec_file, sens_file)
+
+def snpeff_cmd(workspace_dir, reference, in_file):
+    config_file = workspace_dir / 'snpEff.config'
+    references_dir = workspace_dir / 'references'
+    return [
+        'snpeff',
+        'eff',
+        '-v',
+        '-c {}'.format(config_file.resolve()),
+        '-dataDir {}'.format(references_dir.resolve()),
+        '-o vcf',
+        '-no-downstream',
+        '-no-upstream',
+        '-classic',
+        '-noStats',
+        '{}'.format(reference),
+        '{}'.format(in_file.resolve())
+    ]
+
+def snpeff(workspace_dir, project_dir, reference, spec_file, sens_file):
+    print('Running SnpEff...')
+    annotated_spec_file = project_dir / 'spec_variants_annotated.vcf'
+    annotated_sens_file = project_dir / 'sens_variants_annotated.vcf'
+
+    if annotated_spec_file.is_file() and annotated_sens_file.is_file():
+        print('Annotated variant VCFs already exist, skipping...')
+    else:
+        with open(annotated_spec_file, 'w') as spec_out, open(annotated_sens_file, 'w') as sens_out:
+            spec_cmd = snpeff_cmd(workspace_dir, reference, spec_file)
+            sens_cmd = snpeff_cmd(workspace_dir, reference, sens_file)
+            spec_snpeff = subprocess.Popen(spec_cmd, stdout=spec_out)
+            sens_snpeff = subprocess.Popen(sens_cmd, stdout=sens_out)
+            spec_snpeff.communicate()
+            sens_snpeff.communicate()
 
 def main(args):
     # Get the S3 results path from the LIMS
@@ -365,7 +416,7 @@ def main(args):
     ref_dir = get_reference(args.workspace, args.reference)
 
     # Extract the reference files and reads
-    (sequences_file, genes_file) = extract_reference(ref_dir)
+    sequences_file = extract_reference(ref_dir)
 
     # Index the reference sequences file using bwa index
     index_sequences(sequences_file)
@@ -381,6 +432,8 @@ def main(args):
 
     # Perform variant calling
     (spec_file, sens_file) = variant_calling(project_dir, sample_list_file, mpileup_file)
+
+    snpeff(args.workspace, project_dir, args.reference, spec_file, sens_file)
 
 if __name__ == '__main__':
     # Parse the command line arguments against the valid arguments defined in arg_parser.py
