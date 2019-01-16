@@ -364,7 +364,7 @@ def variant_calling(project_dir, sample_list_file, mpileup_file):
     else:
         with open(spec_file, 'w') as spec_out, open(sens_file, 'w') as sens_out:
             spec_cmd = varscan_cmd(3, 0.1, 0.05, mpileup_file, sample_list_file)
-            sens_cmd = varscan_cmd(3, 0.9, 0.05, mpileup_file, sample_list_file)
+            sens_cmd = varscan_cmd(10, 0.9, 0.05, mpileup_file, sample_list_file)
             spec_varscan = subprocess.Popen(spec_cmd, stdout=spec_out, stderr=subprocess.DEVNULL)
             sens_varscan = subprocess.Popen(sens_cmd, stdout=sens_out, stderr=subprocess.DEVNULL)
             spec_varscan.communicate()
