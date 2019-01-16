@@ -187,7 +187,7 @@ def build_snpeff_database(config_file, references_dir, reference):
         '-gff3',
         '-v',
         '{}'.format(reference)
-    ])
+    ], stderr=subprocess.DEVNULL)
 
 def get_reference(workspace, reference):
     """Get the reference genome sequence and annotations from refseq if we don't already have them."""
@@ -302,6 +302,19 @@ def align(project_dir, reads_dir, sequences_file, samples):
             samtools_sort.communicate()
     return alignment_files
 
+def index_align(alignment_files):
+    print('Indexing alignment files...')
+    procs = []
+    for alignment_file in alignment_files:
+        proc = subprocess.Popen([
+            'samtools',
+            'index',
+            '{}'.format(alignment_file)
+        ])
+        procs.append(proc)
+    for proc in procs:
+        proc.communicate()
+
 def generate_mpileup(project_dir, sequences_file, alignment_files):
     print('Generating mpileup file...')
     mpileup_file = project_dir / 'data.mpileup'
@@ -317,7 +330,7 @@ def generate_mpileup(project_dir, sequences_file, alignment_files):
                 'mpileup',
                 '-f',
                 '{}'.format(sequences_file)
-            ] + alignment_file_paths, stdout=out_file)
+            ] + alignment_file_paths, stdout=out_file, stderr=subprocess.DEVNULL)
     
     return mpileup_file
 
@@ -347,7 +360,7 @@ def variant_calling(project_dir, sample_list_file, mpileup_file):
     sens_file = project_dir / 'sens_variants.vcf'
     
     if spec_file.is_file() and sens_file.is_file():
-        print('Variant VCFs already exist, skipping...')
+        print('Variant VCFs already exist, skipping')
     else:
         with open(spec_file, 'w') as spec_out, open(sens_file, 'w') as sens_out:
             spec_cmd = varscan_cmd(3, 0.1, 0.05, mpileup_file, sample_list_file)
@@ -383,13 +396,13 @@ def snpeff(workspace_dir, project_dir, reference, spec_file, sens_file):
     annotated_sens_file = project_dir / 'sens_variants_annotated.vcf'
 
     if annotated_spec_file.is_file() and annotated_sens_file.is_file():
-        print('Annotated variant VCFs already exist, skipping...')
+        print('Annotated variant VCFs already exist, skipping')
     else:
         with open(annotated_spec_file, 'w') as spec_out, open(annotated_sens_file, 'w') as sens_out:
             spec_cmd = snpeff_cmd(workspace_dir, reference, spec_file)
             sens_cmd = snpeff_cmd(workspace_dir, reference, sens_file)
-            spec_snpeff = subprocess.Popen(spec_cmd, stdout=spec_out)
-            sens_snpeff = subprocess.Popen(sens_cmd, stdout=sens_out)
+            spec_snpeff = subprocess.Popen(spec_cmd, stdout=spec_out, stderr=subprocess.DEVNULL)
+            sens_snpeff = subprocess.Popen(sens_cmd, stdout=sens_out, stderr=subprocess.DEVNULL)
             spec_snpeff.communicate()
             sens_snpeff.communicate()
 
@@ -424,6 +437,9 @@ def main(args):
     # Align the sample reads to the reference using bwa mem and sort the bam file
     alignment_files = align(project_dir, reads_dir, sequences_file, args.samples)
 
+    # Index alignment files
+    index_align(alignment_files)
+
     # Generate mpileup
     mpileup_file = generate_mpileup(project_dir, sequences_file, alignment_files)
 
@@ -433,6 +449,7 @@ def main(args):
     # Perform variant calling
     (spec_file, sens_file) = variant_calling(project_dir, sample_list_file, mpileup_file)
 
+    # Call SnpEff to annotate variants
     snpeff(args.workspace, project_dir, args.reference, spec_file, sens_file)
 
 if __name__ == '__main__':
