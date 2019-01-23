@@ -18,10 +18,8 @@ import requests
 from botocore.handlers import disable_signing
 from dotenv import load_dotenv
 
-from arg_parser import arg_parser
-
 # Load environment variables from .env file
-load_dotenv()
+load_dotenv(dotenv_path=Path(__file__).parent.resolve() / '.env')
 
 # Base URL for LIMS
 lims_base_url = os.environ['LIMS_BASE_URL']
@@ -34,7 +32,7 @@ refseq_assembly_summary_url = 'https://ftp.ncbi.nlm.nih.gov/genomes/refseq/bacte
 # S3 / Boto3 Setup
 # boto3.set_stream_logger('')
 # Tell Boto3 to use the local aws config file which gives region and path style
-aws_config_file_path = Path(sys.path[0], '.aws', 'config')
+aws_config_file_path = Path(__file__).parent.resolve() / '.aws' / 'config'
 os.environ['AWS_CONFIG_FILE'] = str(aws_config_file_path)
 s3 = boto3.resource('s3', endpoint_url=s3_url)
 s3.meta.client.meta.events.register('choose-signer.s3.*', disable_signing)
@@ -451,12 +449,3 @@ def main(args):
 
     # Call SnpEff to annotate variants
     snpeff(args.workspace, project_dir, args.reference, spec_file, sens_file)
-
-if __name__ == '__main__':
-    # Parse the command line arguments against the valid arguments defined in arg_parser.py
-    args = arg_parser().parse_args()
-    print('UUID: {}, type: {}'.format(args.uuid, type(args.uuid)))
-    print('Samples: {}, type: {}'.format(args.samples, type(args.samples)))
-    print('Reference: {}, type: {}'.format(args.reference, type(args.reference)))
-    print('Workspace: {}, type: {}'.format(args.workspace, type(args.workspace)))
-    main(args)
