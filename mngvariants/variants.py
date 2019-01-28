@@ -16,6 +16,8 @@ import requests
 from botocore.handlers import disable_signing
 from dotenv import load_dotenv
 
+from . import util
+
 # Load environment variables from .env file
 load_dotenv(dotenv_path=Path(__file__).parent.resolve() / '.env')
 
@@ -113,12 +115,6 @@ def unzip_samples(project_dir, reads_zip_path, samples):
                     local_file.write(reads_zip.read(str(zip_filepath)))
     return reads_dir
 
-def ftp_to_https(ftp_url):
-    """Convert a URL from FTP to HTTPS protocol."""
-    https_url = re.sub(r'^ftp:\/\/(.+)$', 'https://\\1', ftp_url)
-    print('FTP {}\n-> HTTPS {}'.format(ftp_url, https_url))
-    return https_url
-
 def get_refseq_url(reference):
     """Get the RefSeq directory HTTPS URL for the given reference by reading the bacteria assembly summary."""
     print('Getting RefSeq URL for reference "{}"...'.format(reference))
@@ -131,7 +127,7 @@ def get_refseq_url(reference):
     except KeyError:
         raise Exception('Error: reference not found in RefSeq bacteria assembly_summary')
     refseq_dir_ftp = reference_data['ftp_path']
-    refseq_dir_https = ftp_to_https(refseq_dir_ftp)
+    refseq_dir_https = util.ftp_to_https(refseq_dir_ftp)
     print('RefSeq dir for this reference: {}'.format(refseq_dir_https))
     return refseq_dir_https
 
@@ -414,7 +410,7 @@ def main(args):
         print('Project directory {} created'.format(project_dir))
     except FileExistsError:
         print('Project directory {} already exists'.format(project_dir))
-    
+
     # Download the reads zip for this project from S3
     reads_zip_path = download_reads(project_dir, results_path)
 
