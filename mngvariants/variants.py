@@ -172,7 +172,7 @@ def add_reference_to_config(config_file, reference, refseq_url):
 def build_snpeff_database(config_file, references_dir, reference):
     print('Building SnpEff database...')
     subprocess.call([
-        'snpeff',
+        'snpEff',
         'build',
         '-c {}'.format(config_file.resolve()),
         '-dataDir {}'.format(references_dir.resolve()),
@@ -368,7 +368,7 @@ def snpeff_cmd(workspace_dir, reference, in_file):
     config_file = workspace_dir / 'snpEff.config'
     references_dir = workspace_dir / 'references'
     return [
-        'snpeff',
+        'snpEff',
         'eff',
         '-v',
         '-c {}'.format(config_file.resolve()),
