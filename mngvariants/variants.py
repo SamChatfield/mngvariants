@@ -174,7 +174,7 @@ def build_snpeff_database(config_file, references_dir, reference):
         '-gff3',
         '-v',
         '{}'.format(reference)
-    ], stderr=subprocess.DEVNULL)
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def get_reference(workspace, reference):
     """Get the reference genome sequence and annotations from refseq if we don't already have them.
