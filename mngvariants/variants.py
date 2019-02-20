@@ -222,7 +222,8 @@ def get_reference(workspace, reference):
         # Add reference to snpEff.config
         if modify_config:
             add_reference_to_config(config_file, reference, refseq_url)
-            build_snpeff_database(config_file, references_dir, reference)
+
+        build_snpeff_database(config_file, references_dir, reference)
 
     return reference_dir
 
