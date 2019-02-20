@@ -4,82 +4,71 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import urllib.request
 import zipfile
 from itertools import chain
 from pathlib import Path
 
-import boto3
-import botocore.exceptions
 import pandas as pd
 import requests
-from botocore.handlers import disable_signing
 from dotenv import load_dotenv
 
-from . import util
+from . import s3, util
 
 # Load environment variables from .env file
 load_dotenv(dotenv_path=Path(__file__).parent.resolve() / '.env')
 
 # Base URL for LIMS
-lims_base_url = os.environ['LIMS_BASE_URL']
+LIMS_BASE_URL = os.environ['LIMS_BASE_URL']
 # URL and bucket for S3
-s3_url = os.environ['S3_URL']
-s3_bucket_name = os.environ['S3_BUCKET']
+S3_URL = os.environ['S3_URL']
+S3_BUCKET_NAME = os.environ['S3_BUCKET']
 # RefSeq Bacteria Assembly Summary URL
-refseq_assembly_summary_url = 'https://ftp.ncbi.nlm.nih.gov/genomes/refseq/bacteria/assembly_summary.txt'
+REFSEQ_ASSEMBLY_SUMMARY_URL = 'https://ftp.ncbi.nlm.nih.gov/genomes/refseq/bacteria/assembly_summary.txt'
 
-# S3 / Boto3 Setup
-# boto3.set_stream_logger('')
-# Tell Boto3 to use the local aws config file which gives region and path style
-aws_config_file_path = Path(__file__).parent.resolve() / '.aws' / 'config'
-os.environ['AWS_CONFIG_FILE'] = str(aws_config_file_path)
-s3 = boto3.resource('s3', endpoint_url=s3_url)
-s3.meta.client.meta.events.register('choose-signer.s3.*', disable_signing)
-s3_bucket = s3.Bucket(s3_bucket_name)
-
-def is_valid_results_path(results_path):
-    """Check if the provided results path exists in S3."""
-    try:
-        s3_bucket.Object('{}/data.html'.format(results_path)).load()
-        return True
-    except botocore.exceptions.ClientError as e:
-        if e.response['Error']['Code'] in ['403', '404']:
-            return False
-        else:
-            raise
+# Create S3Connection object to handle all S3 interactions
+AWS_CONFIG_FILE_PATH = Path(__file__).parent.resolve() / '.aws' / 'config'
+S3_CONN = s3.S3Connection(S3_URL, S3_BUCKET_NAME, AWS_CONFIG_FILE_PATH)
 
 def get_results_path(uuid):
     """Get the results path of a project by querying LIMS using the UUID."""
     # Get the JSON representation of the project from LIMS
-    project_res = requests.get(
-        '{}/layout/project_api/uuid={}.json'.format(lims_base_url, uuid),
-        params={ 'RFMkey': os.environ['LIMS_RESTFM_KEY'] },
-        timeout=10
-    )
+    try:
+        project_res = requests.get(
+            '{}/layout/project_api/uuid={}.json'.format(LIMS_BASE_URL, uuid),
+            params={'RFMkey': os.environ['LIMS_RESTFM_KEY']},
+            timeout=10
+        )
+    except requests.exceptions.ConnectTimeout:
+        print('Error: Could not connect to LIMS', file=sys.stderr)
+        sys.exit(1)
+
     # Raise an exception if response was HTTP error code
     project_res.raise_for_status()
+
     # Extract the results path from the response
     results_path = project_res.json()['data'][0]['results_path']
 
     # Check that the results path actually exists, if it doesn't raise an Exception
-    if not is_valid_results_path(results_path):
+    if not S3_CONN.is_valid_path('{}/data.html'.format(results_path)):
         raise Exception('The returned results path was not valid')
 
     return results_path
 
 def download_reads(project_dir, results_path):
     """Download the reads zip for this project from S3."""
+    reads_s3_path = '{}/reads.zip'.format(results_path)
     reads_zip_path = project_dir / 'reads.zip'
-    reads_s3_obj = s3_bucket.Object('{}/reads.zip'.format(results_path))
+
     if reads_zip_path.is_file():
-        print('Reads already downloaded for this project')
-        # TODO: Check if the local reads are up to date with the S3 reads (non-trivial)
+        print('Reads already downloaded for this project, skipping')
+        # TODO: Check if local reads are up to date with S3 reads (non-trivial)
     else:
         print('Downloading reads...')
-        path_str = str(reads_zip_path.resolve())
-        reads_s3_obj.download_file(path_str)
-        print('Download complete')
+        S3_CONN.download_file(reads_s3_path, reads_zip_path)
+        print('Download reads complete')
+
     return reads_zip_path
 
 def unzip_samples(project_dir, reads_zip_path, samples):
@@ -90,12 +79,12 @@ def unzip_samples(project_dir, reads_zip_path, samples):
         reads_dir.mkdir()
     except FileExistsError:
         print('Reads directory {} already exists'.format(reads_dir))
-    
+
     # Compute the list of sample files to extract from the zip, two for each sample
     sample_filenames = list(chain.from_iterable([
         ('{}_1_trimmed.fastq.gz'.format(s), '{}_2_trimmed.fastq.gz'.format(s)) for s in samples
     ]))
-    
+
     # Open the reads zip file
     with zipfile.ZipFile(reads_zip_path) as reads_zip:
         # Compute the paths within the zip of the samples to extract
@@ -116,9 +105,11 @@ def unzip_samples(project_dir, reads_zip_path, samples):
     return reads_dir
 
 def get_refseq_url(reference):
-    """Get the RefSeq directory HTTPS URL for the given reference by reading the bacteria assembly summary."""
+    """Get the RefSeq directory HTTPS URL for the given reference by reading the bacteria assembly
+    summary.
+    """
     print('Getting RefSeq URL for reference "{}"...'.format(reference))
-    assembly_summary_data = pd.read_table(refseq_assembly_summary_url, header=1, index_col=0, dtype={
+    assembly_summary_data = pd.read_table(REFSEQ_ASSEMBLY_SUMMARY_URL, header=1, index_col=0, dtype={
         'relation_to_type_material': str
     })
     assembly_summary_data.rename_axis('assembly_accession', axis='index', inplace=True)
@@ -182,7 +173,8 @@ def build_snpeff_database(config_file, references_dir, reference):
     ], stderr=subprocess.DEVNULL)
 
 def get_reference(workspace, reference):
-    """Get the reference genome sequence and annotations from refseq if we don't already have them."""
+    """Get the reference genome sequence and annotations from refseq if we don't already have them.
+    """
     print('Get reference {}...'.format(reference))
 
     config_file = workspace / 'snpEff.config'
@@ -222,12 +214,12 @@ def get_reference(workspace, reference):
         if download_genes:
             genes_url = '{}/{}_genomic.gff.gz'.format(refseq_url, refseq_url.split('/')[-1])
             download_file(genes_url, genes_file)
-        
+
         # Add reference to snpEff.config
         if modify_config:
             add_reference_to_config(config_file, reference, refseq_url)
             build_snpeff_database(config_file, references_dir, reference)
-    
+
     return reference_dir
 
 def extract_reference(reference_directory):
@@ -239,11 +231,11 @@ def extract_reference(reference_directory):
     with gzip.open(reference_directory / 'sequences.fa.gz', 'rb') as seq_in:
         with open(sequences_out, 'wb') as seq_out:
             shutil.copyfileobj(seq_in, seq_out)
-    
+
     with gzip.open(reference_directory / 'genes.gff.gz', 'rb') as gen_in:
         with open(genes_out, 'wb') as gen_out:
             shutil.copyfileobj(gen_in, gen_out)
-    
+
     return sequences_out
 
 def index_sequences(sequences_file):
@@ -281,7 +273,7 @@ def align(project_dir, reads_dir, sequences_file, samples):
                 '-'
             ], stdin=bwa_mem.stdout, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             bwa_mem.stdout.close()
-            
+
             samtools_sort = subprocess.Popen([
                 'samtools',
                 'sort',
@@ -323,7 +315,7 @@ def generate_mpileup(project_dir, sequences_file, alignment_files):
                 '-f',
                 '{}'.format(sequences_file)
             ] + alignment_file_paths, stdout=out_file, stderr=subprocess.DEVNULL)
-    
+
     return mpileup_file
 
 def write_sample_list(project_dir, samples):
@@ -350,7 +342,7 @@ def variant_calling(project_dir, sample_list_file, mpileup_file):
     print('Performing variant calling...')
     spec_file = project_dir / 'spec_variants.vcf'
     sens_file = project_dir / 'sens_variants.vcf'
-    
+
     if spec_file.is_file() and sens_file.is_file():
         print('Variant VCFs already exist, skipping')
     else:
@@ -361,7 +353,7 @@ def variant_calling(project_dir, sample_list_file, mpileup_file):
             sens_varscan = subprocess.Popen(sens_cmd, stdout=sens_out, stderr=subprocess.DEVNULL)
             spec_varscan.communicate()
             sens_varscan.communicate()
-    
+
     return (spec_file, sens_file)
 
 def snpeff_cmd(workspace_dir, reference, in_file):
