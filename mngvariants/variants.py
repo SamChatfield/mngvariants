@@ -156,7 +156,11 @@ def add_reference_to_config(config_file, reference, refseq_url):
             '{0}.genome : {0}'.format(reference),
             '\t{}.chromosome : {}'.format(reference, ', '.join(accessions)),
         ]
-        new_lines += ['\t{}.{}.codonTable : Bacterial_and_Plant_Plastid'.format(reference, accession) for accession in accessions]
+        new_lines += [
+            '\t{}.{}.codonTable : Bacterial_and_Plant_Plastid'.format(reference, accession)
+            for accession
+            in accessions
+        ]
         new_lines = ['{}\n'.format(l) for l in new_lines]
         cfg.writelines(new_lines)
 

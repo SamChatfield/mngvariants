@@ -1,3 +1,5 @@
+"""General S3 functionality.
+"""
 import os
 
 import boto3
