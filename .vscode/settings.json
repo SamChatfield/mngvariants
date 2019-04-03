@@ -1,5 +1,6 @@
 {
     "python.linting.pylintEnabled": true,
     "python.linting.enabled": true,
-    "python.pythonPath": "/anaconda3/envs/mng/bin/python"
+    "python.pythonPath": "/anaconda3/envs/mng/bin/python",
+    "python.linting.pylintUseMinimalCheckers": false
 }
