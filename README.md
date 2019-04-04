@@ -7,7 +7,7 @@
 
 ## External Dependencies
 The following external dependencies are required and can be installed using Anaconda from the Bioconda channel:
-- bwa&#64;0.7.17
-- samtools&#64;1.9
-- snpeff&#64;4.3.1t
-- varscan&#64;2.4.3
+- bwa@<span />0.7.17
+- samtools@<span />1.9
+- snpeff@<span />4.3.1t
+- varscan@<span />2.4.3
