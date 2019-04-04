@@ -14,7 +14,8 @@ REQUIRED = [
     'requests==2.20.1',
     'boto3==1.9.53',
     'pandas==0.23.4',
-    'python-dotenv==0.10.1'
+    'python-dotenv==0.10.1',
+    'pyvcf==0.6.8'
 ]
 
 setup(
@@ -26,7 +27,7 @@ setup(
     python_requires=REQUIRES_PYTHON,
     url=URL,
     packages=find_packages(),
-    package_data={'': ['.env', '.aws/*']},
+    package_data={'': ['.env', 'data/*']},
     entry_points={
         'console_scripts': [
             'mngvariants=mngvariants.cli:main'

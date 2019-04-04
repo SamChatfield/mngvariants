@@ -1,22 +1,18 @@
 """General S3 functionality.
 """
-import os
-
 import boto3
 import botocore.exceptions
-from botocore.handlers import disable_signing
+from botocore.client import Config
 
 
 class S3Connection:
-    def __init__(self, url, bucket_name, aws_config_file_path=None, debug=False):
-        if aws_config_file_path:
-            os.environ['AWS_CONFIG_FILE'] = str(aws_config_file_path)
-
+    def __init__(self, url, bucket_name, s3_config, debug=False):
         if debug:
             boto3.set_stream_logger('')
 
-        self.s3_obj = boto3.resource('s3', endpoint_url=url)
-        self.s3_obj.meta.client.meta.events.register('choose-signer.s3.*', disable_signing)
+        config_obj = Config(s3=s3_config)
+
+        self.s3_obj = boto3.resource('s3', endpoint_url=url, config=config_obj)
         self.bucket = self.s3_obj.Bucket(bucket_name)
 
     def is_valid_path(self, path):
@@ -37,5 +33,12 @@ class S3Connection:
         if out_path.exists():
             raise IOError('File already exists at {}'.format(out_path))
         else:
-            out_path_str = str(out_path.resolve())
+            out_path_str = str(out_path.expanduser().resolve())
             file_s3_obj.download_file(out_path_str)
+
+    def upload_file(self, local_path, s3_path, acl='public-read'):
+        """Upload the file at local_path to S3 at s3_path"""
+        file_s3_obj = self.bucket.Object('{}'.format(s3_path))
+
+        local_path_str = str(local_path.expanduser().resolve())
+        file_s3_obj.upload_file(local_path_str, ExtraArgs={'ACL': acl})

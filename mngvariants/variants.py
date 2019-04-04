@@ -1,4 +1,6 @@
+import csv
 import gzip
+import json
 import multiprocessing
 import os
 import re
@@ -27,9 +29,12 @@ S3_BUCKET_NAME = os.environ['S3_BUCKET']
 # RefSeq Bacteria Assembly Summary URL
 REFSEQ_ASSEMBLY_SUMMARY_URL = 'https://ftp.ncbi.nlm.nih.gov/genomes/refseq/bacteria/assembly_summary.txt'
 
+# S3 configuration
+S3_CONFIG = {
+    'addressing_style': 'virtual'
+}
 # Create S3Connection object to handle all S3 interactions
-AWS_CONFIG_FILE_PATH = Path(__file__).parent.resolve() / '.aws' / 'config'
-S3_CONN = s3.S3Connection(S3_URL, S3_BUCKET_NAME, AWS_CONFIG_FILE_PATH)
+S3_CONN = s3.S3Connection(S3_URL, S3_BUCKET_NAME, S3_CONFIG)
 
 def get_results_path(uuid):
     """Get the results path of a project by querying LIMS using the UUID."""
@@ -241,7 +246,7 @@ def extract_reference(reference_directory):
         with open(genes_out, 'wb') as gen_out:
             shutil.copyfileobj(gen_in, gen_out)
 
-    return sequences_out
+    return (sequences_out, genes_out)
 
 def index_sequences(sequences_file):
     print('Indexing sequences file {}...'.format(sequences_file))
@@ -395,6 +400,73 @@ def snpeff(workspace_dir, project_dir, reference, spec_file, sens_file):
             spec_snpeff.communicate()
             sens_snpeff.communicate()
 
+    return (annotated_spec_file, annotated_sens_file)
+
+def create_tsv(project_dir, annotated_spec_file, annotated_sens_file):
+    print('Converting VCF to TSV...')
+    spec_txt_file = project_dir / 'spec_variants_annotated.txt'
+    sens_txt_file = project_dir / 'sens_variants_annotated.txt'
+
+    if spec_txt_file.is_file() and sens_txt_file.is_file():
+        print('Annotated variant TSV text files already exist, skipping')
+    else:
+        vcf2tab_cmd = ['python', 'mngvariants/vcf2tab.py']
+
+        with open(annotated_spec_file) as spec_in, open(spec_txt_file, 'w') as spec_out:
+            spec_vcf2tab = subprocess.Popen(vcf2tab_cmd, stdin=spec_in, stdout=spec_out)
+            spec_vcf2tab.communicate()
+
+        with open(annotated_sens_file) as sens_in, open(sens_txt_file, 'w') as sens_out:
+            sens_vcf2tab = subprocess.Popen(vcf2tab_cmd, stdin=sens_in, stdout=sens_out)
+            sens_vcf2tab.communicate()
+
+    return (spec_txt_file, sens_txt_file)
+
+def create_json(project_dir, spec_txt_file, sens_txt_file):
+    print('Converting TSV to JSON...')
+    spec_json_file = project_dir / 'spec_variants_annotated.json'
+    sens_json_file = project_dir / 'sens_variants_annotated.json'
+
+    if spec_json_file.is_file() and sens_json_file.is_file():
+        print('Annotated variant JSON files already exist, skipping')
+    else:
+        with open(spec_txt_file) as spec_in, open(spec_json_file, 'w') as spec_out:
+            spec_reader = csv.DictReader(spec_in, delimiter='\t')
+            json.dump([row for row in spec_reader], spec_out, indent=4)
+
+        with open(sens_txt_file) as sens_in, open(sens_json_file, 'w') as sens_out:
+            sens_reader = csv.DictReader(sens_in, delimiter='\t')
+            json.dump([row for row in sens_reader], sens_out, indent=4)
+
+    return (spec_json_file, sens_json_file)
+
+def package_results(project_dir, sequences_file, genes_file):
+    print('Packaging results as zip...')
+    results_zip = project_dir / 'variants_new.zip'
+
+    # Reference fasta and gff
+    filepaths = [sequences_file, genes_file]
+    # BAM files
+    filepaths += list(project_dir.glob('*.sorted.bam*'))
+    # Variant VCF, TXT and JSON files
+    filepaths += list(project_dir.glob('*variants_annotated*'))
+    # README
+    filepaths.append(Path(__file__).parent.resolve() / 'data' / 'README.txt')
+
+    with zipfile.ZipFile(results_zip, 'w') as pz:
+        for fp in filepaths:
+            pz.write(fp, 'variants/{}'.format(fp.name))
+
+    return results_zip
+
+def upload_results(results_path, results_zip, spec_json_file, sens_json_file):
+    print('Uploading results...')
+    filepaths = [spec_json_file, sens_json_file, results_zip]
+    for fp in filepaths:
+        s3_path = '{}/{}'.format(results_path, fp.name)
+        print('Uploading {} to S3 at {}'.format(fp.name, s3_path))
+        S3_CONN.upload_file(fp, s3_path)
+
 def main(args):
     # Get the S3 results path from the LIMS
     results_path = get_results_path(args.uuid)
@@ -418,7 +490,7 @@ def main(args):
     ref_dir = get_reference(args.workspace, args.reference)
 
     # Extract the reference files and reads
-    sequences_file = extract_reference(ref_dir)
+    (sequences_file, genes_file) = extract_reference(ref_dir)
 
     # Index the reference sequences file using bwa index
     index_sequences(sequences_file)
@@ -439,4 +511,18 @@ def main(args):
     (spec_file, sens_file) = variant_calling(project_dir, sample_list_file, mpileup_file)
 
     # Call SnpEff to annotate variants
-    snpeff(args.workspace, project_dir, args.reference, spec_file, sens_file)
+    (annotated_spec_file, annotated_sens_file) = snpeff(args.workspace, project_dir, args.reference, spec_file, sens_file)
+
+    # Create the TSV representation of the annotated VCFs
+    (spec_txt_file, sens_txt_file) = create_tsv(project_dir, annotated_spec_file, annotated_sens_file)
+
+    # Create JSON DataTable file
+    (spec_json_file, sens_json_file) = create_json(project_dir, spec_txt_file, sens_txt_file)
+
+    # Package up the results into a zip to be delivered to the customer
+    results_zip = package_results(project_dir, sequences_file, genes_file)
+
+    # Upload the results zip and JSON DataTable files to S3
+    upload_results(results_path, results_zip, spec_json_file, sens_json_file)
+
+    print('\nDone')
