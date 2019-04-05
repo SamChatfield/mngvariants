@@ -13,13 +13,14 @@ from itertools import chain
 from pathlib import Path
 
 import pandas as pd
+import pkg_resources
 import requests
 from dotenv import load_dotenv
 
 from . import s3, util
 
 # Load environment variables from .env file
-load_dotenv(dotenv_path=Path(__file__).parent.resolve() / '.env')
+load_dotenv(dotenv_path=Path(Path(pkg_resources.resource_filename(__name__, '.env'))))
 
 # Base URL for LIMS
 LIMS_BASE_URL = os.environ['LIMS_BASE_URL']
@@ -451,7 +452,7 @@ def package_results(project_dir, sequences_file, genes_file):
     # Variant VCF, TXT and JSON files
     filepaths += list(project_dir.glob('*variants_annotated*'))
     # README
-    filepaths.append(Path(__file__).parent.resolve() / 'data' / 'README.txt')
+    filepaths.append(Path(pkg_resources.resource_filename(__name__, 'data/README.txt')))
 
     with zipfile.ZipFile(results_zip, 'w') as pz:
         for fp in filepaths:
