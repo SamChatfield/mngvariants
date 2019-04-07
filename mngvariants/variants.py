@@ -411,7 +411,8 @@ def create_tsv(project_dir, annotated_spec_file, annotated_sens_file):
     if spec_txt_file.is_file() and sens_txt_file.is_file():
         print('Annotated variant TSV text files already exist, skipping')
     else:
-        vcf2tab_cmd = ['python', 'mngvariants/vcf2tab.py']
+        vcf2tab_path = Path(__file__).parent.resolve() / 'vcf2tab.py'
+        vcf2tab_cmd = ['python', str(vcf2tab_path)]
 
         with open(annotated_spec_file) as spec_in, open(spec_txt_file, 'w') as spec_out:
             spec_vcf2tab = subprocess.Popen(vcf2tab_cmd, stdin=spec_in, stdout=spec_out)
