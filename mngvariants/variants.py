@@ -450,14 +450,16 @@ def create_json(project_dir, spec_txt_file, sens_txt_file):
     return (spec_json_file, sens_json_file)
 
 
-def package_results(project_dir, sequences_file, genes_file):
+def package_results(project_dir, sequences_file, genes_file, samples):
     print('Packaging results as zip...')
     results_zip = project_dir / RESULTS_ZIP_NAME
 
     # Reference fasta and gff
     filepaths = [sequences_file, genes_file]
-    # BAM files
-    filepaths += list(project_dir.glob('*.sorted.bam*'))
+    # BAM and BAM.BAI files
+    filepaths += list(chain.from_iterable([
+        ('{}.sorted.bam'.format(s), '{}.sorted.bam.bai'.format(s)) for s in samples
+    ]))
     # Variant VCF, TXT and JSON files
     filepaths += list(project_dir.glob('*variants_annotated*'))
     # README
@@ -532,7 +534,7 @@ def main(args):
     (spec_json_file, sens_json_file) = create_json(project_dir, spec_txt_file, sens_txt_file)
 
     # Package up the results into a zip to be delivered to the customer
-    results_zip = package_results(project_dir, sequences_file, genes_file)
+    results_zip = package_results(project_dir, sequences_file, genes_file, args.samples)
 
     # Upload the results zip and JSON DataTable files to S3
     upload_results(results_path, results_zip, spec_json_file, sens_json_file)
