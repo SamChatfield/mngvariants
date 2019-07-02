@@ -456,9 +456,10 @@ def package_results(project_dir, sequences_file, genes_file, samples):
 
     # Reference fasta and gff
     filepaths = [sequences_file, genes_file]
-    # BAM and BAM.BAI files
+    # Sample bam and bam.bai files
     filepaths += list(chain.from_iterable([
-        ('{}.sorted.bam'.format(s), '{}.sorted.bam.bai'.format(s)) for s in samples
+        (project_dir / '{}.sorted.bam'.format(s), project_dir / '{}.sorted.bam.bai'.format(s))
+        for s in samples
     ]))
     # Variant VCF, TXT and JSON files
     filepaths += list(project_dir.glob('*variants_annotated*'))
