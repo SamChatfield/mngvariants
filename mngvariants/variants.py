@@ -37,6 +37,10 @@ S3_CONFIG = {
 # Create S3Connection object to handle all S3 interactions
 S3_CONN = s3.S3Connection(S3_URL, S3_BUCKET_NAME, S3_CONFIG)
 
+# Name of the variant calling results zip file
+RESULTS_ZIP_NAME = 'variants_new.zip'
+
+
 def get_results_path(uuid):
     """Get the results path of a project by querying LIMS using the UUID."""
     # Get the JSON representation of the project from LIMS
@@ -62,6 +66,7 @@ def get_results_path(uuid):
 
     return results_path
 
+
 def download_reads(project_dir, results_path):
     """Download the reads zip for this project from S3."""
     reads_s3_path = '{}/reads.zip'.format(results_path)
@@ -76,6 +81,7 @@ def download_reads(project_dir, results_path):
         print('Download reads complete')
 
     return reads_zip_path
+
 
 def unzip_samples(project_dir, reads_zip_path, samples):
     """Unzip only the required samples' forward reads and reverse reads from the zip."""
@@ -110,6 +116,7 @@ def unzip_samples(project_dir, reads_zip_path, samples):
                     local_file.write(reads_zip.read(str(zip_filepath)))
     return reads_dir
 
+
 def get_refseq_url(reference):
     """Get the RefSeq directory HTTPS URL for the given reference by reading the bacteria assembly
     summary.
@@ -128,11 +135,13 @@ def get_refseq_url(reference):
     print('RefSeq dir for this reference: {}'.format(refseq_dir_https))
     return refseq_dir_https
 
+
 def download_file(url, local_path):
     """Download file from the URL to the local path."""
     print('Download: {} -> {}'.format(url, local_path))
     with urllib.request.urlopen(url) as response, open(local_path, 'wb') as out_file:
         shutil.copyfileobj(response, out_file)
+
 
 def add_reference_to_config(config_file, reference, refseq_url):
     """Add the snpEff.config entries for the reference."""
@@ -170,6 +179,7 @@ def add_reference_to_config(config_file, reference, refseq_url):
         new_lines = ['{}\n'.format(l) for l in new_lines]
         cfg.writelines(new_lines)
 
+
 def build_snpeff_database(config_file, references_dir, reference):
     print('Building SnpEff database...')
     subprocess.call([
@@ -181,6 +191,7 @@ def build_snpeff_database(config_file, references_dir, reference):
         '-v',
         '{}'.format(reference)
     ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
 
 def get_reference(workspace, reference):
     """Get the reference genome sequence and annotations from refseq if we don't already have them.
@@ -233,6 +244,7 @@ def get_reference(workspace, reference):
 
     return reference_dir
 
+
 def extract_reference(reference_directory):
     """Extract the reference sequence and annotations and return the decompressed files."""
     print('Extracting reference files...')
@@ -249,9 +261,11 @@ def extract_reference(reference_directory):
 
     return (sequences_out, genes_out)
 
+
 def index_sequences(sequences_file):
     print('Indexing sequences file {}...'.format(sequences_file))
     subprocess.call(['bwa', 'index', '{}'.format(sequences_file)], stderr=subprocess.DEVNULL)
+
 
 def align(project_dir, reads_dir, sequences_file, samples):
     print('Aligning reads to reference...')
@@ -265,37 +279,35 @@ def align(project_dir, reads_dir, sequences_file, samples):
         sorted_sample_file = project_dir / '{}.sorted.bam'.format(sample)
         alignment_files.append(sorted_sample_file)
 
-        if sorted_sample_file.is_file():
-            print('Sample {} already aligned, skipping'.format(sample))
-        else:
-            bwa_mem = subprocess.Popen([
-                'bwa',
-                'mem',
-                '-t{}'.format(cpu_count),
-                '{}'.format(sequences_file),
-                '{}'.format(fwd_read),
-                '{}'.format(rev_read),
-            ], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        bwa_mem = subprocess.Popen([
+            'bwa',
+            'mem',
+            '-t{}'.format(cpu_count),
+            '{}'.format(sequences_file),
+            '{}'.format(fwd_read),
+            '{}'.format(rev_read),
+        ], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
-            samtools_view = subprocess.Popen([
-                'samtools',
-                'view',
-                '-Shu',
-                '-'
-            ], stdin=bwa_mem.stdout, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-            bwa_mem.stdout.close()
+        samtools_view = subprocess.Popen([
+            'samtools',
+            'view',
+            '-Shu',
+            '-'
+        ], stdin=bwa_mem.stdout, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        bwa_mem.stdout.close()
 
-            samtools_sort = subprocess.Popen([
-                'samtools',
-                'sort',
-                '-',
-                '-o',
-                '{}'.format(sorted_sample_file.resolve())
-            ], stdin=samtools_view.stdout, stderr=subprocess.DEVNULL)
-            samtools_view.stdout.close()
+        samtools_sort = subprocess.Popen([
+            'samtools',
+            'sort',
+            '-',
+            '-o',
+            '{}'.format(sorted_sample_file.resolve())
+        ], stdin=samtools_view.stdout, stderr=subprocess.DEVNULL)
+        samtools_view.stdout.close()
 
-            samtools_sort.communicate()
+        samtools_sort.communicate()
     return alignment_files
+
 
 def index_align(alignment_files):
     print('Indexing alignment files...')
@@ -310,24 +322,23 @@ def index_align(alignment_files):
     for proc in procs:
         proc.communicate()
 
+
 def generate_mpileup(project_dir, sequences_file, alignment_files):
     print('Generating mpileup file...')
     mpileup_file = project_dir / 'data.mpileup'
 
-    if mpileup_file.is_file():
-        print('mpileup already exists, skipping')
-    else:
-        alignment_file_paths = [filepath.resolve() for filepath in alignment_files]
+    alignment_file_paths = [filepath.resolve() for filepath in alignment_files]
 
-        with open(mpileup_file, 'w') as out_file:
-            subprocess.call([
-                'samtools',
-                'mpileup',
-                '-f',
-                '{}'.format(sequences_file)
-            ] + alignment_file_paths, stdout=out_file, stderr=subprocess.DEVNULL)
+    with open(mpileup_file, 'w') as out_file:
+        subprocess.call([
+            'samtools',
+            'mpileup',
+            '-f',
+            '{}'.format(sequences_file)
+        ] + alignment_file_paths, stdout=out_file, stderr=subprocess.DEVNULL)
 
     return mpileup_file
+
 
 def write_sample_list(project_dir, samples):
     sample_list_file = project_dir / 'samples_list.txt'
@@ -335,6 +346,7 @@ def write_sample_list(project_dir, samples):
         for sample in samples:
             f.write('{}\n'.format(sample))
     return sample_list_file
+
 
 def varscan_cmd(min_coverage, min_var_freq, p_value, mpileup_file, sample_list_file):
     return [
@@ -349,23 +361,23 @@ def varscan_cmd(min_coverage, min_var_freq, p_value, mpileup_file, sample_list_f
         '--vcf-sample-list {}'.format(sample_list_file.resolve())
     ]
 
+
 def variant_calling(project_dir, sample_list_file, mpileup_file):
     print('Performing variant calling...')
     spec_file = project_dir / 'spec_variants.vcf'
     sens_file = project_dir / 'sens_variants.vcf'
 
-    if spec_file.is_file() and sens_file.is_file():
-        print('Variant VCFs already exist, skipping')
-    else:
-        with open(spec_file, 'w') as spec_out, open(sens_file, 'w') as sens_out:
-            spec_cmd = varscan_cmd(3, 0.1, 0.05, mpileup_file, sample_list_file)
-            sens_cmd = varscan_cmd(10, 0.9, 0.05, mpileup_file, sample_list_file)
-            spec_varscan = subprocess.Popen(spec_cmd, stdout=spec_out, stderr=subprocess.DEVNULL)
-            sens_varscan = subprocess.Popen(sens_cmd, stdout=sens_out, stderr=subprocess.DEVNULL)
-            spec_varscan.communicate()
-            sens_varscan.communicate()
+    with open(spec_file, 'w') as spec_out, open(sens_file, 'w') as sens_out:
+        # TODO: Define these in a config file?
+        spec_cmd = varscan_cmd(3, 0.1, 0.05, mpileup_file, sample_list_file)
+        sens_cmd = varscan_cmd(10, 0.9, 0.05, mpileup_file, sample_list_file)
+        spec_varscan = subprocess.Popen(spec_cmd, stdout=spec_out, stderr=subprocess.DEVNULL)
+        sens_varscan = subprocess.Popen(sens_cmd, stdout=sens_out, stderr=subprocess.DEVNULL)
+        spec_varscan.communicate()
+        sens_varscan.communicate()
 
     return (spec_file, sens_file)
+
 
 def snpeff_cmd(workspace_dir, reference, in_file):
     config_file = workspace_dir / 'snpEff.config'
@@ -385,66 +397,62 @@ def snpeff_cmd(workspace_dir, reference, in_file):
         '{}'.format(in_file.resolve())
     ]
 
+
 def snpeff(workspace_dir, project_dir, reference, spec_file, sens_file):
     print('Running SnpEff...')
     annotated_spec_file = project_dir / 'spec_variants_annotated.vcf'
     annotated_sens_file = project_dir / 'sens_variants_annotated.vcf'
 
-    if annotated_spec_file.is_file() and annotated_sens_file.is_file():
-        print('Annotated variant VCFs already exist, skipping')
-    else:
-        with open(annotated_spec_file, 'w') as spec_out, open(annotated_sens_file, 'w') as sens_out:
-            spec_cmd = snpeff_cmd(workspace_dir, reference, spec_file)
-            sens_cmd = snpeff_cmd(workspace_dir, reference, sens_file)
-            spec_snpeff = subprocess.Popen(spec_cmd, stdout=spec_out, stderr=subprocess.DEVNULL)
-            sens_snpeff = subprocess.Popen(sens_cmd, stdout=sens_out, stderr=subprocess.DEVNULL)
-            spec_snpeff.communicate()
-            sens_snpeff.communicate()
+    with open(annotated_spec_file, 'w') as spec_out, open(annotated_sens_file, 'w') as sens_out:
+        spec_cmd = snpeff_cmd(workspace_dir, reference, spec_file)
+        sens_cmd = snpeff_cmd(workspace_dir, reference, sens_file)
+        spec_snpeff = subprocess.Popen(spec_cmd, stdout=spec_out, stderr=subprocess.DEVNULL)
+        sens_snpeff = subprocess.Popen(sens_cmd, stdout=sens_out, stderr=subprocess.DEVNULL)
+        spec_snpeff.communicate()
+        sens_snpeff.communicate()
 
     return (annotated_spec_file, annotated_sens_file)
+
 
 def create_tsv(project_dir, annotated_spec_file, annotated_sens_file):
     print('Converting VCF to TSV...')
     spec_txt_file = project_dir / 'spec_variants_annotated.txt'
     sens_txt_file = project_dir / 'sens_variants_annotated.txt'
 
-    if spec_txt_file.is_file() and sens_txt_file.is_file():
-        print('Annotated variant TSV text files already exist, skipping')
-    else:
-        vcf2tab_path = Path(__file__).parent.resolve() / 'vcf2tab.py'
-        vcf2tab_cmd = ['python', str(vcf2tab_path)]
+    # TODO: Find a better way of doing this (rewrite vcf2tab?)
+    vcf2tab_path = Path(__file__).parent.resolve() / 'vcf2tab.py'
+    vcf2tab_cmd = ['python', str(vcf2tab_path)]
 
-        with open(annotated_spec_file) as spec_in, open(spec_txt_file, 'w') as spec_out:
-            spec_vcf2tab = subprocess.Popen(vcf2tab_cmd, stdin=spec_in, stdout=spec_out)
-            spec_vcf2tab.communicate()
+    with open(annotated_spec_file) as spec_in, open(spec_txt_file, 'w') as spec_out:
+        spec_vcf2tab = subprocess.Popen(vcf2tab_cmd, stdin=spec_in, stdout=spec_out)
+        spec_vcf2tab.communicate()
 
-        with open(annotated_sens_file) as sens_in, open(sens_txt_file, 'w') as sens_out:
-            sens_vcf2tab = subprocess.Popen(vcf2tab_cmd, stdin=sens_in, stdout=sens_out)
-            sens_vcf2tab.communicate()
+    with open(annotated_sens_file) as sens_in, open(sens_txt_file, 'w') as sens_out:
+        sens_vcf2tab = subprocess.Popen(vcf2tab_cmd, stdin=sens_in, stdout=sens_out)
+        sens_vcf2tab.communicate()
 
     return (spec_txt_file, sens_txt_file)
+
 
 def create_json(project_dir, spec_txt_file, sens_txt_file):
     print('Converting TSV to JSON...')
     spec_json_file = project_dir / 'spec_variants_annotated.json'
     sens_json_file = project_dir / 'sens_variants_annotated.json'
 
-    if spec_json_file.is_file() and sens_json_file.is_file():
-        print('Annotated variant JSON files already exist, skipping')
-    else:
-        with open(spec_txt_file) as spec_in, open(spec_json_file, 'w') as spec_out:
-            spec_reader = csv.DictReader(spec_in, delimiter='\t')
-            json.dump([row for row in spec_reader], spec_out, indent=4)
+    with open(spec_txt_file) as spec_in, open(spec_json_file, 'w') as spec_out:
+        spec_reader = csv.DictReader(spec_in, delimiter='\t')
+        json.dump([row for row in spec_reader], spec_out, indent=4)
 
-        with open(sens_txt_file) as sens_in, open(sens_json_file, 'w') as sens_out:
-            sens_reader = csv.DictReader(sens_in, delimiter='\t')
-            json.dump([row for row in sens_reader], sens_out, indent=4)
+    with open(sens_txt_file) as sens_in, open(sens_json_file, 'w') as sens_out:
+        sens_reader = csv.DictReader(sens_in, delimiter='\t')
+        json.dump([row for row in sens_reader], sens_out, indent=4)
 
     return (spec_json_file, sens_json_file)
 
+
 def package_results(project_dir, sequences_file, genes_file):
     print('Packaging results as zip...')
-    results_zip = project_dir / 'variants_new.zip'
+    results_zip = project_dir / RESULTS_ZIP_NAME
 
     # Reference fasta and gff
     filepaths = [sequences_file, genes_file]
@@ -461,6 +469,7 @@ def package_results(project_dir, sequences_file, genes_file):
 
     return results_zip
 
+
 def upload_results(results_path, results_zip, spec_json_file, sens_json_file):
     print('Uploading results...')
     filepaths = [spec_json_file, sens_json_file, results_zip]
@@ -468,6 +477,7 @@ def upload_results(results_path, results_zip, spec_json_file, sens_json_file):
         s3_path = '{}/{}'.format(results_path, fp.name)
         print('Uploading {} to S3 at {}'.format(fp.name, s3_path))
         S3_CONN.upload_file(fp, s3_path)
+
 
 def main(args):
     # Get the S3 results path from the LIMS
