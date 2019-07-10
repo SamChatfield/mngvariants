@@ -38,7 +38,7 @@ S3_CONFIG = {
 S3_CONN = s3.S3Connection(S3_URL, S3_BUCKET_NAME, S3_CONFIG)
 
 # Name of the variant calling results zip file
-RESULTS_ZIP_NAME = 'variants_new.zip'
+RESULTS_ZIP_NAME = 'variants_new'
 
 
 def get_results_path(uuid):
@@ -452,7 +452,7 @@ def create_json(project_dir, spec_txt_file, sens_txt_file):
 
 def package_results(project_dir, sequences_file, genes_file, samples):
     print('Packaging results as zip...')
-    results_zip = project_dir / RESULTS_ZIP_NAME
+    results_zip = project_dir / '{}.zip'.format(RESULTS_ZIP_NAME)
 
     # Reference fasta and gff
     filepaths = [sequences_file, genes_file]
@@ -468,7 +468,7 @@ def package_results(project_dir, sequences_file, genes_file, samples):
 
     with zipfile.ZipFile(results_zip, 'w') as pz:
         for fp in filepaths:
-            pz.write(fp, 'variants/{}'.format(fp.name))
+            pz.write(fp, '{}/{}'.format(RESULTS_ZIP_NAME, fp.name))
 
     return results_zip
 
