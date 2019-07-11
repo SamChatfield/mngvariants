@@ -323,6 +323,38 @@ def index_align(alignment_files):
         proc.communicate()
 
 
+def no_coverage(project_dir, alignment_files):
+    print('Finding regions of no coverage...')
+    nocov_files = []
+    procs = []
+
+    for alignment_file in alignment_files:
+        sample_name = alignment_file.name.rsplit('.', 2)[0]
+        bed_file = project_dir / '{}_nocov.bed'.format(sample_name)
+        nocov_files.append(bed_file)
+
+        with open(bed_file, 'w') as out_file:
+            bedtools_genomecov = subprocess.Popen([
+                'bedtools',
+                'genomecov',
+                '-bga',
+                '-ibam',
+                '{}'.format(alignment_file)
+            ], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+
+            awk = subprocess.Popen([
+                'awk',
+                '{ if ($4==0) print }'
+            ], stdin=bedtools_genomecov.stdout, stdout=out_file, stderr=subprocess.DEVNULL)
+            bedtools_genomecov.stdout.close()
+
+            procs.append(awk)
+    for proc in procs:
+        proc.communicate()
+
+    return nocov_files
+
+
 def generate_mpileup(project_dir, sequences_file, alignment_files):
     print('Generating mpileup file...')
     mpileup_file = project_dir / 'data.mpileup'
@@ -456,11 +488,12 @@ def package_results(project_dir, sequences_file, genes_file, samples):
 
     # Reference fasta and gff
     filepaths = [sequences_file, genes_file]
-    # Sample bam and bam.bai files
-    filepaths += list(chain.from_iterable([
-        (project_dir / '{}.sorted.bam'.format(s), project_dir / '{}.sorted.bam.bai'.format(s))
-        for s in samples
-    ]))
+    # Sample bam, bam.bai and bed files
+    filepaths += list(chain.from_iterable([(
+        project_dir / '{}.sorted.bam'.format(s),
+        project_dir / '{}.sorted.bam.bai'.format(s),
+        project_dir / '{}_nocov.bed'.format(s)
+    ) for s in samples]))
     # Variant VCF, TXT and JSON files
     filepaths += list(project_dir.glob('*variants_annotated*'))
     # README
@@ -515,6 +548,9 @@ def main(args):
 
     # Index alignment files
     index_align(alignment_files)
+
+    # Compute regions of no coverage for each sample outputting bed files
+    no_coverage(project_dir, alignment_files)
 
     # Generate mpileup
     mpileup_file = generate_mpileup(project_dir, sequences_file, alignment_files)
