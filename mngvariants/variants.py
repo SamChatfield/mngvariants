@@ -499,7 +499,7 @@ def package_results(project_dir, sequences_file, genes_file, samples):
     # README
     filepaths.append(Path(pkg_resources.resource_filename(__name__, 'data/README.txt')))
 
-    with zipfile.ZipFile(results_zip, 'w') as pz:
+    with zipfile.ZipFile(results_zip, 'w', zipfile.ZIP_DEFLATED) as pz:
         for fp in filepaths:
             pz.write(fp, '{}/{}'.format(RESULTS_ZIP_NAME, fp.name))
 
