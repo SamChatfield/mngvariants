@@ -145,16 +145,11 @@ def get_refseq_url(reference):
     return refseq_dir_https
 
 
-def download_file(url, local_path):
-    """Download file from the URL to the local path."""
-    print('Download: {} -> {}'.format(url, local_path))
-    with urllib.request.urlopen(url) as response, open(local_path, 'wb') as out_file:
-        shutil.copyfileobj(response, out_file)
-
-
-def add_reference_to_config(config_file, reference, refseq_url):
-    """Add the snpEff.config entries for the reference."""
-    print('Adding snpEff.config entry for reference {}...'.format(reference))
+def get_accessions(refseq_url):
+    """Get a list of the accessions for the reference from the given refseq_url's
+    assembly_report.txt file. Return the accessions with the version suffixes removed.
+    """
+    print('Getting accessions from {}...'.format(refseq_url))
     assembly_report_data = pd.read_table(
         '{}/{}_assembly_report.txt'.format(refseq_url, refseq_url.split('/')[-1]),
         comment='#',
@@ -171,9 +166,46 @@ def add_reference_to_config(config_file, reference, refseq_url):
             'UCSC-style-name'
         ]
     )
-    # Extract the list of accessions without duplicates and in order
+
+    # Extract the list of accessions from the assembly report without duplicates and in order
     accessions = list(dict.fromkeys(assembly_report_data['RefSeq-Accn']))
-    # Write the lines for this reference with these accessions to snpEff.config
+    # Strip off the version suffixes
+    accessions_stripped = [accn.split('.')[0] for accn in accessions]
+
+    return accessions_stripped
+
+
+def download_file(url, local_path):
+    """Download file from the URL to the local path."""
+    print('Download: {} -> {}'.format(url, local_path))
+    with urllib.request.urlopen(url) as response, open(local_path, 'wb') as out_file:
+        shutil.copyfileobj(response, out_file)
+
+
+def extract_file(in_gzip_path, out_file_path):
+    """Extract gzip file at the path in_gzip_path to the path at out_file_path."""
+    print('Extract: {} -> {}'.format(in_gzip_path, out_file_path))
+    with gzip.open(in_gzip_path, 'rb') as in_file:
+        with open(out_file_path, 'wb') as out_file:
+            shutil.copyfileobj(in_file, out_file)
+
+
+def rewrite_accessions(file_path, accessions):
+    """Rewrite instances of the accessions in the file given by file_path without the version
+    suffix.
+    """
+    regex = r'({})\.\d+'.format('|'.join(accessions))
+    with open(file_path, 'r+') as f:
+        updated_contents = re.sub(regex, '\\1', f.read())
+        f.seek(0)
+        f.write(updated_contents)
+        f.truncate()
+
+
+def add_reference_to_config(config_file, reference, refseq_url, accessions):
+    """Add the snpEff.config entries for the reference."""
+    print('Adding snpEff.config entry for reference {}...'.format(reference))
+    # Write the lines for this reference with the accessions to snpEff.config
     with open(config_file, 'a') as cfg:
         new_lines = [
             '',
@@ -181,8 +213,8 @@ def add_reference_to_config(config_file, reference, refseq_url):
             '\t{}.chromosome : {}'.format(reference, ', '.join(accessions)),
         ]
         new_lines += [
-            '\t{}.{}.codonTable : Bacterial_and_Plant_Plastid'.format(reference, accession)
-            for accession
+            '\t{}.{}.codonTable : Bacterial_and_Plant_Plastid'.format(reference, accn)
+            for accn
             in accessions
         ]
         new_lines = ['{}\n'.format(l) for l in new_lines]
@@ -196,7 +228,7 @@ def build_snpeff_database(config_file, references_dir, reference):
         'build',
         '-c {}'.format(config_file.resolve()),
         '-dataDir {}'.format(references_dir.resolve()),
-        '-gff3',
+        '-genbank',
         '-v',
         '{}'.format(reference)
     ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -210,21 +242,28 @@ def get_reference(workspace, reference):
     config_file = workspace / 'snpEff.config'
     # Check that the snpEff.config file exists
     if not config_file.is_file():
-        raise Exception('Workspace directory does not contain snpEff.config')
+        raise FileNotFoundError('Workspace directory does not contain snpEff.config')
 
     references_dir = workspace / 'references'
     reference_dir = references_dir / reference
-    sequences_file = reference_dir / 'sequences.fa.gz'
-    genes_file = reference_dir / 'genes.gff.gz'
+    sequences_gzip = reference_dir / 'sequences.fa.gz'
+    sequences_file = reference_dir / 'sequences.fa'
+    genes_gzip = reference_dir / 'genes.gbk.gz'
+    genes_file = reference_dir / 'genes.gbk'
 
-    # Create the directory for this reference in workspace/snpEff/ if it doesn't already exist
+    # Create the directory for this reference in workspace/references/ if it doesn't already exist
     try:
         reference_dir.mkdir(parents=True)
     except FileExistsError:
         print('Reference directory {} already exists'.format(reference_dir))
 
-    # Check if sequences.fa.gz and genes.gff.gz are already downloaded
-    (download_sequences, download_genes) = (not sequences_file.is_file(), not genes_file.is_file())
+    # Check if sequences.fa.gz and genes.gbk.gz are already downloaded
+    (download_sequences, download_genes) = (not sequences_gzip.is_file(), not genes_gzip.is_file())
+    # Check if the sequences and/or genes need to be extracted again
+    (extract_sequences, extract_genes) = (
+        download_sequences or not sequences_file.is_file(),
+        download_genes or not genes_file.is_file()
+    )
 
     # Check if snpEff.config already contains the configuration for this reference
     regex = r'^{}.genome'.format(re.escape(reference))
@@ -235,40 +274,33 @@ def get_reference(workspace, reference):
     if download_sequences or download_genes or modify_config:
         # Get the RefSeq directory URL for the reference
         refseq_url = get_refseq_url(reference)
+        accessions = get_accessions(refseq_url)
 
         # Download sequences.fa.gz
         if download_sequences:
             sequences_url = '{}/{}_genomic.fna.gz'.format(refseq_url, refseq_url.split('/')[-1])
-            download_file(sequences_url, sequences_file)
-        # Download genes.gff.gz
+            download_file(sequences_url, sequences_gzip)
+        # Extract sequences.fa.gz to sequences.fa and rewrite accessions without version suffixes
+        if extract_sequences:
+            extract_file(sequences_gzip, sequences_file)
+            rewrite_accessions(sequences_file, accessions)
+
+        # Download genes.gbff.gz as genes.gbk.gz
         if download_genes:
-            genes_url = '{}/{}_genomic.gff.gz'.format(refseq_url, refseq_url.split('/')[-1])
-            download_file(genes_url, genes_file)
+            genes_url = '{}/{}_genomic.gbff.gz'.format(refseq_url, refseq_url.split('/')[-1])
+            download_file(genes_url, genes_gzip)
+        # Extract genes.gbk.gz to sequences.gbk and rewrite accessions without version suffixes
+        if extract_genes:
+            extract_file(genes_gzip, genes_file)
+            rewrite_accessions(genes_file, accessions)
 
         # Add reference to snpEff.config
         if modify_config:
-            add_reference_to_config(config_file, reference, refseq_url)
+            add_reference_to_config(config_file, reference, refseq_url, accessions)
 
         build_snpeff_database(config_file, references_dir, reference)
 
-    return reference_dir
-
-
-def extract_reference(reference_directory):
-    """Extract the reference sequence and annotations and return the decompressed files."""
-    print('Extracting reference files...')
-    sequences_out = reference_directory / 'sequences.fa'
-    genes_out = reference_directory / 'genes.gff'
-
-    with gzip.open(reference_directory / 'sequences.fa.gz', 'rb') as seq_in:
-        with open(sequences_out, 'wb') as seq_out:
-            shutil.copyfileobj(seq_in, seq_out)
-
-    with gzip.open(reference_directory / 'genes.gff.gz', 'rb') as gen_in:
-        with open(genes_out, 'wb') as gen_out:
-            shutil.copyfileobj(gen_in, gen_out)
-
-    return (sequences_out, genes_out)
+    return (sequences_file, genes_file)
 
 
 def index_sequences(sequences_file):
@@ -554,10 +586,7 @@ def main(args):
     reads_dir = unzip_samples(project_dir, reads_zip_path, args.samples)
 
     # Get reference genome and annotations from RefSeq
-    ref_dir = get_reference(args.workspace, args.reference)
-
-    # Extract the reference files and reads
-    (sequences_file, genes_file) = extract_reference(ref_dir)
+    (sequences_file, genes_file) = get_reference(args.workspace, args.reference)
 
     # Index the reference sequences file using bwa index
     index_sequences(sequences_file)
