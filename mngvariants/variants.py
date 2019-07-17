@@ -1,6 +1,7 @@
 import csv
 import gzip
 import json
+import logging
 import multiprocessing
 import os
 import re
@@ -21,6 +22,14 @@ from . import s3, util
 
 # Load environment variables from .env file
 load_dotenv(dotenv_path=Path(Path(pkg_resources.resource_filename(__name__, '.env'))))
+
+# Setup console logging
+LOG_FORMAT = '%(asctime)s [%(levelname)s] : %(message)s'
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(logging.Formatter(LOG_FORMAT))
+logger.addHandler(console_handler)
 
 # Base URL for LIMS
 LIMS_BASE_URL = os.environ['LIMS_BASE_URL']
@@ -527,6 +536,16 @@ def main(args):
         print('Project directory {} created'.format(project_dir))
     except FileExistsError:
         print('Project directory {} already exists'.format(project_dir))
+
+    # Setup file logging to project directory
+    log_dir = project_dir / 'logs'
+    log_dir.mkdir(exist_ok=True)
+    log_file = log_dir / 'mngvariants.log'
+    if log_file.is_file():
+        log_file.unlink()
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    logger.addHandler(file_handler)
 
     # Download the reads zip for this project from S3
     reads_zip_path = download_reads(project_dir, results_path)
