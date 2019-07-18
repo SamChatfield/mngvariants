@@ -26,7 +26,6 @@ load_dotenv(dotenv_path=Path(Path(pkg_resources.resource_filename(__name__, '.en
 # Setup console logging
 LOG_FORMAT = '%(asctime)s [%(levelname)s] : %(message)s'
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(logging.Formatter(LOG_FORMAT))
 logger.addHandler(console_handler)
@@ -557,9 +556,8 @@ def upload_results(results_path, results_zip, spec_json_file, sens_json_file):
 
 
 def main(args):
-    # Get the S3 results path from the LIMS
-    results_path = get_results_path(args.uuid)
-    print('Results Path: {}'.format(results_path))
+    # Set logging level by args.loglevel
+    logger.setLevel(args.loglevel)
 
     # Create a directory inside workspace/projects/ for this project by UUID
     project_dir = args.workspace / 'projects' / args.uuid
@@ -578,6 +576,16 @@ def main(args):
     file_handler = logging.FileHandler(log_file)
     file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
     logger.addHandler(file_handler)
+
+    # Log arguments
+    logger.debug('UUID: {}, type: {}'.format(args.uuid, type(args.uuid)))
+    logger.debug('Samples: {}, type: {}'.format(args.samples, type(args.samples)))
+    logger.debug('Reference: {}, type: {}'.format(args.reference, type(args.reference)))
+    logger.debug('Workspace: {}, type: {}'.format(args.workspace, type(args.workspace)))
+
+    # Get the S3 results path from the LIMS
+    results_path = get_results_path(args.uuid)
+    print('Results Path: {}'.format(results_path))
 
     # Download the reads zip for this project from S3
     reads_zip_path = download_reads(project_dir, results_path)
