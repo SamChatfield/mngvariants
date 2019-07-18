@@ -25,7 +25,7 @@ load_dotenv(dotenv_path=Path(Path(pkg_resources.resource_filename(__name__, '.en
 
 # Setup console logging
 LOG_FORMAT = '%(asctime)s [%(levelname)s] : %(message)s'
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('mngvariants')
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(logging.Formatter(LOG_FORMAT))
 logger.addHandler(console_handler)
@@ -51,6 +51,7 @@ RESULTS_ZIP_NAME = 'variants_new'
 
 def get_results_path(uuid):
     """Get the results path of a project by querying LIMS using the UUID."""
+    logger.debug('Getting project results path from LIMS')
     # Get the JSON representation of the project from LIMS
     try:
         project_res = requests.get(
@@ -58,9 +59,8 @@ def get_results_path(uuid):
             params={'RFMkey': os.environ['LIMS_RESTFM_KEY']},
             timeout=10
         )
-    except requests.exceptions.ConnectTimeout:
-        print('Error: Could not connect to LIMS', file=sys.stderr)
-        sys.exit(1)
+    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+        raise Exception('Could not connect to the LIMS')
 
     # Raise an exception if response was HTTP error code
     project_res.raise_for_status()
@@ -70,7 +70,7 @@ def get_results_path(uuid):
 
     # Check that the results path actually exists, if it doesn't raise an Exception
     if not S3_CONN.is_valid_path('{}/data.html'.format(results_path)):
-        raise Exception('The returned results path was not valid')
+        raise Exception('The returned results path ({}/data.html) does not exist in S3'.format(results_path))
 
     return results_path
 
@@ -81,24 +81,20 @@ def download_reads(project_dir, results_path):
     reads_zip_path = project_dir / 'reads.zip'
 
     if reads_zip_path.is_file():
-        print('Reads already downloaded for this project, skipping')
-        # TODO: Check if local reads are up to date with S3 reads (non-trivial)
+        logger.info('Reads already downloaded, skipping')
     else:
-        print('Downloading reads...')
+        logger.info('Downloading reads...')
         S3_CONN.download_file(reads_s3_path, reads_zip_path)
-        print('Download reads complete')
 
     return reads_zip_path
 
 
 def unzip_samples(project_dir, reads_zip_path, samples):
     """Unzip only the required samples' forward reads and reverse reads from the zip."""
+    logger.info('Extracting required reads...')
     # Create the reads directory if it doesn't already exist
     reads_dir = project_dir / 'reads'
-    try:
-        reads_dir.mkdir()
-    except FileExistsError:
-        print('Reads directory {} already exists'.format(reads_dir))
+    reads_dir.mkdir(exist_ok=True)
 
     # Compute the list of sample files to extract from the zip, two for each sample
     sample_filenames = list(chain.from_iterable([
@@ -113,14 +109,13 @@ def unzip_samples(project_dir, reads_zip_path, samples):
             sample_filepaths = [Path(filepath) for filepath in reads_zip.namelist() if sample_filename in filepath]
             zip_filepaths += sample_filepaths
         # Extract all of the files identified, except those that have already been extracted
-        print('Extracting:')
         for zip_filepath in zip_filepaths:
             reads_local_file = reads_dir / zip_filepath.name
             if reads_local_file.is_file():
-                print('Sample {} already extracted, skipping'.format(reads_local_file.name))
+                logger.debug('Sample {} already extracted, skipping'.format(reads_local_file.name))
             else:
                 with open(reads_local_file, 'wb') as local_file:
-                    print('Zip {}\n-> Local {}'.format(zip_filepath, reads_local_file))
+                    logger.debug('Zip {}\n-> Local {}'.format(zip_filepath, reads_local_file))
                     local_file.write(reads_zip.read(str(zip_filepath)))
     return reads_dir
 
@@ -129,7 +124,7 @@ def get_refseq_url(reference):
     """Get the RefSeq directory HTTPS URL for the given reference by reading the bacteria assembly
     summary.
     """
-    print('Getting RefSeq URL for reference "{}"...'.format(reference))
+    logger.debug('Getting RefSeq URL for reference {}'.format(reference))
     assembly_summary_data = pd.read_table(REFSEQ_ASSEMBLY_SUMMARY_URL, header=1, index_col=0, dtype={
         'relation_to_type_material': str
     })
@@ -137,10 +132,10 @@ def get_refseq_url(reference):
     try:
         reference_data = assembly_summary_data.loc[reference]
     except KeyError:
-        raise Exception('Error: reference not found in RefSeq bacteria assembly_summary')
+        raise Exception('Reference not found in RefSeq bacteria assembly_summary.txt')
     refseq_dir_ftp = reference_data['ftp_path']
     refseq_dir_https = util.ftp_to_https(refseq_dir_ftp)
-    print('RefSeq dir for this reference: {}'.format(refseq_dir_https))
+    logger.debug('RefSeq dir for this reference: {}'.format(refseq_dir_https))
     return refseq_dir_https
 
 
@@ -148,7 +143,7 @@ def get_accessions(refseq_url):
     """Get a list of the accessions for the reference from the given refseq_url's
     assembly_report.txt file. Return the accessions with the version suffixes removed.
     """
-    print('Getting accessions from {}...'.format(refseq_url))
+    logger.debug('Getting accessions from {}'.format(refseq_url))
     assembly_report_data = pd.read_table(
         '{}/{}_assembly_report.txt'.format(refseq_url, refseq_url.split('/')[-1]),
         comment='#',
@@ -176,14 +171,14 @@ def get_accessions(refseq_url):
 
 def download_file(url, local_path):
     """Download file from the URL to the local path."""
-    print('Download: {} -> {}'.format(url, local_path))
+    logger.debug('Download: {} -> {}'.format(url, local_path))
     with urllib.request.urlopen(url) as response, open(local_path, 'wb') as out_file:
         shutil.copyfileobj(response, out_file)
 
 
 def extract_file(in_gzip_path, out_file_path):
     """Extract gzip file at the path in_gzip_path to the path at out_file_path."""
-    print('Extract: {} -> {}'.format(in_gzip_path, out_file_path))
+    logger.debug('Extract: {} -> {}'.format(in_gzip_path, out_file_path))
     with gzip.open(in_gzip_path, 'rb') as in_file:
         with open(out_file_path, 'wb') as out_file:
             shutil.copyfileobj(in_file, out_file)
@@ -193,6 +188,7 @@ def rewrite_accessions(file_path, accessions):
     """Rewrite instances of the accessions in the file given by file_path without the version
     suffix.
     """
+    logger.debug('Rewriting accessions in sequences.fa and genes.gbk')
     regex = r'({})\.\d+'.format('|'.join(accessions))
     with open(file_path, 'r+') as f:
         updated_contents = re.sub(regex, '\\1', f.read())
@@ -203,7 +199,7 @@ def rewrite_accessions(file_path, accessions):
 
 def add_reference_to_config(config_file, reference, refseq_url, accessions):
     """Add the snpEff.config entries for the reference."""
-    print('Adding snpEff.config entry for reference {}...'.format(reference))
+    logger.debug('Adding snpEff.config entry for reference')
     # Write the lines for this reference with the accessions to snpEff.config
     with open(config_file, 'a') as cfg:
         new_lines = [
@@ -221,7 +217,7 @@ def add_reference_to_config(config_file, reference, refseq_url, accessions):
 
 
 def build_snpeff_database(config_file, references_dir, reference):
-    print('Building SnpEff database...')
+    logger.info('Building SnpEff database...')
     subprocess.call([
         'snpEff',
         'build',
@@ -236,7 +232,7 @@ def build_snpeff_database(config_file, references_dir, reference):
 def get_reference(workspace, reference):
     """Get the reference genome sequence and annotations from refseq if we don't already have them.
     """
-    print('Get reference {}...'.format(reference))
+    logger.info('Setting up reference files...')
 
     config_file = workspace / 'snpEff.config'
     # Check that the snpEff.config file exists
@@ -251,10 +247,7 @@ def get_reference(workspace, reference):
     genes_file = reference_dir / 'genes.gbk'
 
     # Create the directory for this reference in workspace/references/ if it doesn't already exist
-    try:
-        reference_dir.mkdir(parents=True)
-    except FileExistsError:
-        print('Reference directory {} already exists'.format(reference_dir))
+    reference_dir.mkdir(parents=True, exist_ok=True)
 
     # Check if sequences.fa.gz and genes.gbk.gz are already downloaded
     (download_sequences, download_genes) = (not sequences_gzip.is_file(), not genes_gzip.is_file())
@@ -303,17 +296,17 @@ def get_reference(workspace, reference):
 
 
 def index_sequences(sequences_file):
-    print('Indexing sequences file {}...'.format(sequences_file))
+    logger.info('Indexing sequences fasta with bwa index...'.format(sequences_file))
     subprocess.call(['bwa', 'index', '{}'.format(sequences_file)], stderr=subprocess.DEVNULL)
 
 
 def align(project_dir, reads_dir, sequences_file, samples):
-    print('Aligning reads to reference...')
+    logger.info('Aligning reads to reference with bwa mem...')
     cpu_count = multiprocessing.cpu_count()
     alignment_files = []
 
     for sample in samples:
-        print('Aligning sample {}'.format(sample))
+        logger.debug('Aligning sample {}'.format(sample))
         fwd_read = reads_dir / '{}_1_trimmed.fastq.gz'.format(sample)
         rev_read = reads_dir / '{}_2_trimmed.fastq.gz'.format(sample)
         sorted_sample_file = project_dir / '{}.sorted.bam'.format(sample)
@@ -350,7 +343,7 @@ def align(project_dir, reads_dir, sequences_file, samples):
 
 
 def index_align(alignment_files):
-    print('Indexing alignment files...')
+    logger.info('Indexing bam files with samtools index...')
     procs = []
     for alignment_file in alignment_files:
         proc = subprocess.Popen([
@@ -364,7 +357,7 @@ def index_align(alignment_files):
 
 
 def no_coverage(project_dir, alignment_files):
-    print('Finding regions of no coverage...')
+    logger.info('Finding regions of no coverage with bedtools genomecov...')
     nocov_files = []
     procs = []
 
@@ -396,7 +389,7 @@ def no_coverage(project_dir, alignment_files):
 
 
 def generate_mpileup(project_dir, sequences_file, alignment_files):
-    print('Generating mpileup file...')
+    logger.info('Running samtools mpileup...')
     mpileup_file = project_dir / 'data.mpileup'
 
     alignment_file_paths = [filepath.resolve() for filepath in alignment_files]
@@ -435,7 +428,7 @@ def varscan_cmd(min_coverage, min_var_freq, p_value, mpileup_file, sample_list_f
 
 
 def variant_calling(project_dir, sample_list_file, mpileup_file):
-    print('Performing variant calling...')
+    logger.info('Running VarScan...')
     spec_file = project_dir / 'spec_variants.vcf'
     sens_file = project_dir / 'sens_variants.vcf'
 
@@ -471,7 +464,7 @@ def snpeff_cmd(workspace_dir, reference, in_file):
 
 
 def snpeff(workspace_dir, project_dir, reference, spec_file, sens_file):
-    print('Running SnpEff...')
+    logger.info('Running SnpEff...')
     annotated_spec_file = project_dir / 'spec_variants_annotated.vcf'
     annotated_sens_file = project_dir / 'sens_variants_annotated.vcf'
 
@@ -487,7 +480,7 @@ def snpeff(workspace_dir, project_dir, reference, spec_file, sens_file):
 
 
 def create_tsv(project_dir, annotated_spec_file, annotated_sens_file):
-    print('Converting VCF to TSV...')
+    logger.info('Converting variants VCF to TSV...')
     spec_txt_file = project_dir / 'spec_variants_annotated.txt'
     sens_txt_file = project_dir / 'sens_variants_annotated.txt'
 
@@ -507,7 +500,7 @@ def create_tsv(project_dir, annotated_spec_file, annotated_sens_file):
 
 
 def create_json(project_dir, spec_txt_file, sens_txt_file):
-    print('Converting TSV to JSON...')
+    logger.info('Converting variants TSV to JSON...')
     spec_json_file = project_dir / 'spec_variants_annotated.json'
     sens_json_file = project_dir / 'sens_variants_annotated.json'
 
@@ -523,7 +516,7 @@ def create_json(project_dir, spec_txt_file, sens_txt_file):
 
 
 def package_results(project_dir, sequences_file, genes_file, samples):
-    print('Packaging results as zip...')
+    logger.info('Packaging results as zip...')
     results_zip = project_dir / '{}.zip'.format(RESULTS_ZIP_NAME)
 
     # Reference fasta and gff
@@ -547,11 +540,11 @@ def package_results(project_dir, sequences_file, genes_file, samples):
 
 
 def upload_results(results_path, results_zip, spec_json_file, sens_json_file):
-    print('Uploading results...')
+    logger.info('Uploading results zip to S3...')
     filepaths = [spec_json_file, sens_json_file, results_zip]
     for fp in filepaths:
         s3_path = '{}/{}'.format(results_path, fp.name)
-        print('Uploading {} to S3 at {}'.format(fp.name, s3_path))
+        logger.debug('Uploading {} to S3 at {}'.format(fp.name, s3_path))
         S3_CONN.upload_file(fp, s3_path)
 
 
@@ -561,11 +554,7 @@ def main(args):
 
     # Create a directory inside workspace/projects/ for this project by UUID
     project_dir = args.workspace / 'projects' / args.uuid
-    try:
-        project_dir.mkdir(parents=True)
-        print('Project directory {} created'.format(project_dir))
-    except FileExistsError:
-        print('Project directory {} already exists'.format(project_dir))
+    project_dir.mkdir(parents=True, exist_ok=True)
 
     # Setup file logging to project directory
     log_dir = project_dir / 'logs'
@@ -578,14 +567,16 @@ def main(args):
     logger.addHandler(file_handler)
 
     # Log arguments
-    logger.debug('UUID: {}, type: {}'.format(args.uuid, type(args.uuid)))
-    logger.debug('Samples: {}, type: {}'.format(args.samples, type(args.samples)))
-    logger.debug('Reference: {}, type: {}'.format(args.reference, type(args.reference)))
-    logger.debug('Workspace: {}, type: {}'.format(args.workspace, type(args.workspace)))
+    logger.debug('UUID: {}'.format(args.uuid))
+    logger.debug('Samples: {}'.format(args.samples))
+    logger.debug('Reference: {}'.format(args.reference))
+    logger.debug('Workspace: {}'.format(args.workspace))
+
+    print('1/6 - Downloading reads and setting up workspace')
 
     # Get the S3 results path from the LIMS
     results_path = get_results_path(args.uuid)
-    print('Results Path: {}'.format(results_path))
+    logger.debug('Results Path: {}'.format(results_path))
 
     # Download the reads zip for this project from S3
     reads_zip_path = download_reads(project_dir, results_path)
@@ -599,6 +590,8 @@ def main(args):
     # Index the reference sequences file using bwa index
     index_sequences(sequences_file)
 
+    print('2/6 - Aligning reads to reference')
+
     # Align the sample reads to the reference using bwa mem and sort the bam file
     alignment_files = align(project_dir, reads_dir, sequences_file, args.samples)
 
@@ -608,14 +601,20 @@ def main(args):
     # Compute regions of no coverage for each sample outputting bed files
     no_coverage(project_dir, alignment_files)
 
+    print('3/6 - Generating mpileup')
+
     # Generate mpileup
     mpileup_file = generate_mpileup(project_dir, sequences_file, alignment_files)
 
     # Write sample list file as required by VarScan's vcf-sample-list option
     sample_list_file = write_sample_list(project_dir, args.samples)
 
+    print('4/6 - Performing variant calling')
+
     # Perform variant calling
     (spec_file, sens_file) = variant_calling(project_dir, sample_list_file, mpileup_file)
+
+    print('5/6 - Annotating variants')
 
     # Call SnpEff to annotate variants
     (annotated_spec_file, annotated_sens_file) = snpeff(args.workspace, project_dir, args.reference, spec_file, sens_file)
@@ -625,6 +624,8 @@ def main(args):
 
     # Create JSON DataTable file
     (spec_json_file, sens_json_file) = create_json(project_dir, spec_txt_file, sens_txt_file)
+
+    print('6/6 - Uploading results')
 
     # Package up the results into a zip to be delivered to the customer
     results_zip = package_results(project_dir, sequences_file, genes_file, args.samples)
