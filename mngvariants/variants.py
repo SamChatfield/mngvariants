@@ -188,7 +188,7 @@ def rewrite_accessions(file_path, accessions):
     """Rewrite instances of the accessions in the file given by file_path without the version
     suffix.
     """
-    logger.debug('Rewriting accessions in sequences.fa and genes.gbk')
+    logger.debug('Rewriting accessions in {}'.format(file_path))
     regex = r'({})\.\d+'.format('|'.join(accessions))
     with open(file_path, 'r+') as f:
         updated_contents = re.sub(regex, '\\1', f.read())
