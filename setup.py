@@ -11,7 +11,7 @@ REQUIRES_PYTHON = '>=3.6.0'
 
 # Required dependencies
 REQUIRED = [
-    'requests==2.20.1',
+    'requests==2.31.0',
     'boto3==1.9.53',
     'pandas==0.23.4',
     'python-dotenv==0.10.1',
